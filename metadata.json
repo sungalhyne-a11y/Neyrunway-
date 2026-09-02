@@ -1,0 +1,8 @@
+{
+  "name": "Neyrunway",
+  "description": "AI-native financial operating system for students. Transform bank balances into dynamic financial runway.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

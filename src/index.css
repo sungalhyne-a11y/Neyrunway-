@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-primary: #0B0E17;
+    --bg-surface: #161b27;
+    --bg-surface-elevated: #1e293b;
+    --bg-surface-subtle: #111520;
+    
+    --accent-runway: #D4FF3D;
+    --accent-runway-hover: #C2F028;
+    --accent-runway-dim: rgba(212, 255, 61, 0.15);
+    
+    --text-primary: #F5F5F0;
+    --text-secondary: #B8BCC4;
+    --text-muted: #8A8F98;
+    
+    --border-subtle: #1e293b;
+    --border-medium: #2a384f;
+    
+    --status-positive: #D4FF3D;
+    --status-neutral: #38BDF8;
+    --status-warning: #F59E0B;
+    --status-danger: #F43F5E;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    overflow-x: hidden;
+  }
+
+  /* Runway monospace accents */
+  .font-mono-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Custom scrollbar for Dark Luxury UI */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #0B0E17;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2a384f;
+}
+

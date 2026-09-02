@@ -1,0 +1,101 @@
+{
+  "entities": {
+    "User": {
+      "path": "users/{userId}",
+      "description": "User profile with localized preferences, region, and runway settings",
+      "fields": {
+        "userId": { "type": "string", "description": "Auth UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "Display name or student handle" },
+        "preferredLanguage": { "type": "string", "description": "Language code (fr, en)" },
+        "region": { "type": "string", "description": "Region/Country code for locale formatting (FR, US, CA, UK, etc.)" },
+        "currency": { "type": "string", "description": "Active currency symbol/code (EUR, USD, CAD, GBP)" },
+        "initialBalance": { "type": "number", "description": "Current liquid cash balance" },
+        "onboardingCompleted": { "type": "boolean", "description": "Status of the onboarding questionnaire" },
+        "createdAt": { "type": "timestamp", "description": "Account creation date" },
+        "updatedAt": { "type": "timestamp", "description": "Profile last update timestamp" }
+      }
+    },
+    "Transaction": {
+      "path": "users/{userId}/transactions/{transactionId}",
+      "description": "Historical, planned or recurring expenses that affect financial runway",
+      "fields": {
+        "id": { "type": "string", "description": "Unique transaction id" },
+        "title": { "type": "string", "description": "Expense label (e.g. Rent, Groceries, Spotify)" },
+        "amount": { "type": "number", "description": "Monetary cost" },
+        "category": { "type": "string", "description": "Housing, food, study, leisure, transport, subscription, other" },
+        "type": { "type": "string", "description": "fixed, variable, or recurring" },
+        "date": { "type": "string", "description": "ISO date string or YYYY-MM-DD" },
+        "status": { "type": "string", "description": "settled, pending, or recurring_active" },
+        "createdAt": { "type": "timestamp", "description": "Creation timestamp" }
+      }
+    },
+    "IncomeEvent": {
+      "path": "users/{userId}/incomeEvents/{incomeEventId}",
+      "description": "Upcoming or irregular student income (grants, student jobs, family support)",
+      "fields": {
+        "id": { "type": "string", "description": "Unique income event id" },
+        "source": { "type": "string", "description": "Income source name (e.g. CROUS, Job Etudiant, Bourse)" },
+        "amount": { "type": "number", "description": "Expected incoming amount" },
+        "expectedDate": { "type": "string", "description": "Expected deposit date" },
+        "type": { "type": "string", "description": "grant, job, family, freelance, loan, other" },
+        "status": { "type": "string", "description": "confirmed, estimated, received" },
+        "createdAt": { "type": "timestamp", "description": "Creation timestamp" }
+      }
+    },
+    "Goal": {
+      "path": "users/{userId}/goals/{goalId}",
+      "description": "Financial goals / buffer targets (e.g. Summer trip, Emergency buffer)",
+      "fields": {
+        "id": { "type": "string", "description": "Unique goal id" },
+        "name": { "type": "string", "description": "Goal title" },
+        "targetAmount": { "type": "number", "description": "Target monetary goal" },
+        "currentAmount": { "type": "number", "description": "Amount locked or set aside" },
+        "deadline": { "type": "string", "description": "Target completion date" },
+        "category": { "type": "string", "description": "emergency, trip, equipment, tuition, other" },
+        "createdAt": { "type": "timestamp", "description": "Creation timestamp" }
+      }
+    },
+    "CategoryBudget": {
+      "path": "users/{userId}/categoryBudgets/{budgetId}",
+      "description": "Custom or standard category monthly spending limits (e.g. Food, Rent, Entertainment)",
+      "fields": {
+        "id": { "type": "string", "description": "Unique category budget id" },
+        "categoryKey": { "type": "string", "description": "Category identifier or custom key" },
+        "name": { "type": "string", "description": "Display name of category" },
+        "monthlyLimit": { "type": "number", "description": "Monthly spending cap" },
+        "color": { "type": "string", "description": "Color theme identifier" },
+        "icon": { "type": "string", "description": "Lucide icon identifier" },
+        "isCustom": { "type": "boolean", "description": "Whether this is a user-created custom category" },
+        "notes": { "type": "string", "description": "Optional notes or guidelines" },
+        "createdAt": { "type": "timestamp", "description": "Creation timestamp" },
+        "updatedAt": { "type": "timestamp", "description": "Last update timestamp" }
+      }
+    },
+    "ComputedRunway": {
+      "path": "users/{userId}/computed/runway",
+      "description": "Computed runway autonomy metrics generated by Runway engine/Cloud Function",
+      "fields": {
+        "runwayDays": { "type": "number", "description": "Number of financial autonomy days remaining" },
+        "safeToSpendToday": { "type": "number", "description": "Raw unformatted daily discretionary budget" },
+        "projectedBurnPerDay": { "type": "number", "description": "Daily fixed & variable burn rate" },
+        "currentBalance": { "type": "number", "description": "Current liquid cash balance" },
+        "daysUntilNextIncome": { "type": "number", "description": "Days remaining until next inflow" },
+        "nextIncomeAmount": { "type": "number", "description": "Amount of upcoming incoming event" },
+        "nextIncomeDate": { "type": "string", "description": "Date of upcoming income" },
+        "totalFixedExpenses": { "type": "number", "description": "Monthly recurring fixed commitments" },
+        "updatedAt": { "type": "timestamp", "description": "Calculation timestamp" }
+      }
+    },
+    "ChatHistory": {
+      "path": "users/{userId}/chatHistory/{chatId}",
+      "description": "Conversations and decision simulations with AI Copilot Ney",
+      "fields": {
+        "id": { "type": "string", "description": "Chat session or message thread id" },
+        "messages": { "type": "array", "description": "List of user and AI messages with simulation cards" },
+        "runwayImpact": { "type": "object", "description": "Simulated runway change (daysBefore, daysAfter, decisionAdvice)" },
+        "updatedAt": { "type": "timestamp", "description": "Last message timestamp" }
+      }
+    }
+  }
+}
