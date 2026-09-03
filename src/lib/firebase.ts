@@ -8,7 +8,20 @@ import {
   memoryLocalCache,
   Firestore
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+import bundledFirebaseConfig from '../../firebase-applet-config.json';
+
+// Support both static configuration and Vercel/Vite environment variables
+const env = typeof import.meta !== 'undefined' && (import.meta as any).env ? (import.meta as any).env : ({} as any);
+
+const firebaseConfig = {
+  apiKey: env.VITE_FIREBASE_API_KEY || bundledFirebaseConfig.apiKey,
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || bundledFirebaseConfig.authDomain,
+  projectId: env.VITE_FIREBASE_PROJECT_ID || bundledFirebaseConfig.projectId,
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || bundledFirebaseConfig.storageBucket,
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || bundledFirebaseConfig.messagingSenderId,
+  appId: env.VITE_FIREBASE_APP_ID || bundledFirebaseConfig.appId,
+  firestoreDatabaseId: env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || bundledFirebaseConfig.firestoreDatabaseId || '(default)',
+};
 
 // Initialize Firebase App singleton
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();

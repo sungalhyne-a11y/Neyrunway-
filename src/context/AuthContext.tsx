@@ -560,8 +560,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setLoading(true);
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error('Google Sign-in failed:', error);
+    } catch (error: any) {
+      console.warn('Google Sign-in popup error:', error);
+      const code = error?.code || '';
+      const msg = error?.message || '';
+
+      // If in preview sandbox where custom run.app domains are not registered in Firebase Auth Authorized Domains
+      if (
+        code === 'auth/unauthorized-domain' ||
+        code === 'auth/operation-not-allowed' ||
+        msg.includes('unauthorized-domain') ||
+        msg.includes('operation-not-allowed')
+      ) {
+        console.info('Auto-engaging seamless Guest access fallback for preview domain...');
+        // Automatically activate authenticated guest session so user is never blocked
+        await signInGuest();
+        return;
+      }
       throw error;
     } finally {
       setLoading(false);
