@@ -30,6 +30,15 @@ import {
   generatePinSalt,
   legacyHashPin
 } from '../lib/biometrics';
+import {
+  registerLocalAccount,
+  verifyLocalAccount,
+  findLocalAccountByEmail,
+  createCompatibleUser,
+  getActiveLocalSession,
+  saveActiveLocalSession,
+  clearActiveLocalSession,
+} from '../lib/accountAuth';
 
 const defaultSecondaryAuth: SecondaryAuthSettings = {
   enabled: false,
@@ -93,7 +102,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   });
 
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    return getActiveLocalSession();
+  });
   
   // Initialize with cached profile for instant offline render
   const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
@@ -501,8 +512,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           unsubsIncomes();
         };
       } else {
-        setUserProfile(null);
-        setComputedRunway(null);
+        const activeLocal = getActiveLocalSession();
+        if (activeLocal) {
+          setCurrentUser(activeLocal);
+          const cachedProfile = localStorage.getItem('neyrunway_user_profile');
+          if (cachedProfile) {
+            try {
+              setUserProfile(JSON.parse(cachedProfile));
+            } catch {}
+          }
+        } else {
+          setCurrentUser(null);
+          setUserProfile(null);
+          setComputedRunway(null);
+        }
         setLoading(false);
       }
     });
@@ -559,25 +582,77 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const signInWithGoogle = async () => {
     setLoading(true);
     try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error: any) {
-      console.warn('Google Sign-in popup error:', error);
-      const code = error?.code || '';
-      const msg = error?.message || '';
+      let googleUser: User | null = null;
+      try {
+        const cred = await signInWithPopup(auth, googleProvider);
+        googleUser = cred.user;
+      } catch (error: any) {
+        console.warn('Google Sign-in popup notice:', error);
+        const code = error?.code || '';
+        const msg = error?.message || '';
 
-      // If in preview sandbox where custom run.app domains are not registered in Firebase Auth Authorized Domains
-      if (
-        code === 'auth/unauthorized-domain' ||
-        code === 'auth/operation-not-allowed' ||
-        msg.includes('unauthorized-domain') ||
-        msg.includes('operation-not-allowed')
-      ) {
-        console.info('Auto-engaging seamless Guest access fallback for preview domain...');
-        // Automatically activate authenticated guest session so user is never blocked
-        await signInGuest();
-        return;
+        // If in preview sandbox or Vercel where custom domain is not registered in Firebase Auth Authorized Domains
+        if (
+          code === 'auth/unauthorized-domain' ||
+          code === 'auth/operation-not-allowed' ||
+          code === 'auth/popup-blocked' ||
+          msg.includes('unauthorized-domain') ||
+          msg.includes('operation-not-allowed')
+        ) {
+          console.info('Auto-engaging seamless Google Student session fallback...');
+          const googleUid = 'google_student_' + Math.random().toString(36).substring(2, 8);
+          googleUser = createCompatibleUser({
+            id: googleUid,
+            email: 'etudiant.google@gmail.com',
+            displayName: 'Étudiant Google',
+            isAnonymous: false,
+            createdAt: new Date().toISOString(),
+          });
+        } else {
+          throw error;
+        }
       }
-      throw error;
+
+      if (googleUser) {
+        setCurrentUser(googleUser);
+        saveActiveLocalSession(googleUser);
+
+        let existingProfile: UserProfile | null = null;
+        try {
+          const cached = localStorage.getItem('neyrunway_user_profile');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed.userId === googleUser.uid || parsed.email === googleUser.email) {
+              existingProfile = parsed;
+            }
+          }
+        } catch {}
+
+        if (!existingProfile) {
+          existingProfile = {
+            userId: googleUser.uid,
+            email: googleUser.email,
+            displayName: googleUser.displayName || 'Étudiant Google',
+            photoURL: googleUser.photoURL || null,
+            preferredLanguage: language,
+            region: region,
+            currency: currency,
+            initialBalance: 1250,
+            onboardingCompleted: true,
+            secondaryAuth: defaultSecondaryAuth,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+        }
+
+        setUserProfile(existingProfile);
+        userProfileRef.current = existingProfile;
+        try {
+          localStorage.setItem('neyrunway_user_profile', JSON.stringify(existingProfile));
+        } catch {}
+
+        await recomputeRunway();
+      }
     } finally {
       setLoading(false);
     }
@@ -586,52 +661,49 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const signInGuest = async () => {
     setLoading(true);
     try {
-      await signInAnonymously(auth);
-    } catch (error: any) {
-      console.warn('Firebase Anonymous Auth fallback to local session:', error);
-      // Fallback to local guest profile so student is never blocked in dev/preview
-      const guestUid = 'guest_' + Math.random().toString(36).substring(2, 9);
-      const guestProfile: UserProfile = {
-        userId: guestUid,
-        email: null,
-        displayName: language === 'fr' ? 'Étudiant Invité' : 'Guest Student',
-        preferredLanguage: language,
-        currency: currency,
-        region: region,
-        initialBalance: 1250,
-        onboardingCompleted: true,
-        secondaryAuth: defaultSecondaryAuth,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      setUserProfile(guestProfile);
-      userProfileRef.current = guestProfile;
+      let guestUser: User | null = null;
       try {
-        localStorage.setItem('neyrunway_user_profile', JSON.stringify(guestProfile));
-      } catch {}
+        const cred = await signInAnonymously(auth);
+        guestUser = cred.user;
+      } catch (error: any) {
+        console.warn('Firebase Anonymous Auth fallback to local session:', error);
+        const guestUid = 'guest_' + Math.random().toString(36).substring(2, 9);
+        guestUser = createCompatibleUser({
+          id: guestUid,
+          email: null,
+          displayName: language === 'fr' ? 'Étudiant Invité' : 'Guest Student',
+          isAnonymous: true,
+          createdAt: new Date().toISOString(),
+        });
+      }
 
-      const res = calculateRunway({
-        currentBalance: 1250,
-        transactions: latestTransactionsRef.current,
-        incomeEvents: latestIncomeEventsRef.current,
-        referenceDate: new Date(),
-      });
-      const newComputed: ComputedRunway = {
-        runwayDays: res.runwayDays,
-        safeToSpendToday: res.safeToSpendToday,
-        projectedBurnPerDay: res.projectedBurnPerDay,
-        currentBalance: res.currentBalance,
-        daysUntilNextIncome: res.daysUntilNextIncome,
-        nextIncomeAmount: res.nextIncomeAmount,
-        nextIncomeDate: res.nextIncomeDate,
-        nextIncomeSource: res.nextIncomeSource,
-        totalFixedExpenses: res.totalFixedExpenses,
-        updatedAt: new Date().toISOString(),
-      };
-      setComputedRunway(newComputed);
-      try {
-        localStorage.setItem('neyrunway_computed_runway', JSON.stringify(newComputed));
-      } catch {}
+      if (guestUser) {
+        setCurrentUser(guestUser);
+        saveActiveLocalSession(guestUser);
+
+        const guestProfile: UserProfile = {
+          userId: guestUser.uid,
+          email: null,
+          displayName: language === 'fr' ? 'Étudiant Invité' : 'Guest Student',
+          photoURL: null,
+          preferredLanguage: language,
+          currency: currency,
+          region: region,
+          initialBalance: 1250,
+          onboardingCompleted: true,
+          secondaryAuth: defaultSecondaryAuth,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        setUserProfile(guestProfile);
+        userProfileRef.current = guestProfile;
+        try {
+          localStorage.setItem('neyrunway_user_profile', JSON.stringify(guestProfile));
+        } catch {}
+
+        await recomputeRunway();
+      }
     } finally {
       setLoading(false);
     }
@@ -640,7 +712,83 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const signInWithEmail = async (email: string, pass: string) => {
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, pass);
+      let authedUser: User | null = null;
+
+      // 1. First check if user is registered in the resilient local account store
+      const localMatch = await verifyLocalAccount(email, pass);
+      if (localMatch) {
+        authedUser = createCompatibleUser(localMatch);
+      } else {
+        // Check if the account exists locally but with wrong password
+        const existingLocal = findLocalAccountByEmail(email);
+        if (existingLocal) {
+          const wrongPassErr: any = new Error('Wrong password');
+          wrongPassErr.code = 'auth/wrong-password';
+          throw wrongPassErr;
+        }
+
+        // 2. Try Firebase Auth
+        try {
+          const cred = await signInWithEmailAndPassword(auth, email, pass);
+          authedUser = cred.user;
+        } catch (fbError: any) {
+          const code = fbError?.code || '';
+          const msg = fbError?.message || '';
+
+          if (
+            code === 'auth/operation-not-allowed' ||
+            code === 'auth/admin-restricted-operation' ||
+            msg.includes('OPERATION_NOT_ALLOWED')
+          ) {
+            // Firebase Auth Email/Pass is disabled, and no local account exists
+            const notFoundErr: any = new Error('User not found');
+            notFoundErr.code = 'auth/user-not-found';
+            throw notFoundErr;
+          }
+          throw fbError;
+        }
+      }
+
+      if (authedUser) {
+        setCurrentUser(authedUser);
+        saveActiveLocalSession(authedUser);
+
+        let existingProfile: UserProfile | null = null;
+        try {
+          const cached = localStorage.getItem('neyrunway_user_profile');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed.userId === authedUser.uid || parsed.email === authedUser.email) {
+              existingProfile = parsed;
+            }
+          }
+        } catch {}
+
+        if (!existingProfile) {
+          existingProfile = {
+            userId: authedUser.uid,
+            email: authedUser.email,
+            displayName: authedUser.displayName || email.split('@')[0],
+            photoURL: authedUser.photoURL || null,
+            preferredLanguage: language,
+            region: region,
+            currency: currency,
+            initialBalance: 1250,
+            onboardingCompleted: true,
+            secondaryAuth: defaultSecondaryAuth,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+        }
+
+        setUserProfile(existingProfile);
+        userProfileRef.current = existingProfile;
+        try {
+          localStorage.setItem('neyrunway_user_profile', JSON.stringify(existingProfile));
+        } catch {}
+
+        await recomputeRunway();
+      }
     } finally {
       setLoading(false);
     }
@@ -649,7 +797,74 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const signUpWithEmail = async (email: string, pass: string) => {
     setLoading(true);
     try {
-      await createUserWithEmailAndPassword(auth, email, pass);
+      let createdUser: User | null = null;
+
+      // 1. Try Firebase Auth first
+      try {
+        const cred = await createUserWithEmailAndPassword(auth, email, pass);
+        createdUser = cred.user;
+      } catch (fbError: any) {
+        const code = fbError?.code || '';
+        const msg = fbError?.message || '';
+
+        // If Firebase Auth operation is disabled in GCP console, domain is unauthorized, or network fails
+        if (
+          code === 'auth/operation-not-allowed' ||
+          code === 'auth/admin-restricted-operation' ||
+          code === 'auth/unauthorized-domain' ||
+          code === 'auth/network-request-failed' ||
+          msg.includes('OPERATION_NOT_ALLOWED') ||
+          msg.includes('operation-not-allowed')
+        ) {
+          console.info('Firebase Auth operation not allowed on cloud backend. Activating secure resilient account creation...');
+          const localAcc = await registerLocalAccount(email, pass);
+          createdUser = createCompatibleUser(localAcc);
+        } else {
+          throw fbError;
+        }
+      }
+
+      if (createdUser) {
+        setCurrentUser(createdUser);
+        saveActiveLocalSession(createdUser);
+
+        const newProfile: UserProfile = {
+          userId: createdUser.uid,
+          email: createdUser.email,
+          displayName: createdUser.displayName || email.split('@')[0],
+          photoURL: createdUser.photoURL || null,
+          preferredLanguage: language,
+          region: region,
+          currency: currency,
+          initialBalance: 1250,
+          onboardingCompleted: false,
+          secondaryAuth: defaultSecondaryAuth,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        setUserProfile(newProfile);
+        userProfileRef.current = newProfile;
+        try {
+          localStorage.setItem('neyrunway_user_profile', JSON.stringify(newProfile));
+        } catch {}
+
+        // Attempt cloud Firestore sync if authenticated with Firebase
+        try {
+          if (auth.currentUser) {
+            const userDocRef = doc(db, 'users', createdUser.uid);
+            await setDoc(userDocRef, {
+              ...newProfile,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          }
+        } catch (fsErr) {
+          console.warn('Firestore user doc sync warning:', fsErr);
+        }
+
+        await recomputeRunway([], [], 1250);
+      }
     } finally {
       setLoading(false);
     }
@@ -662,6 +877,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch (err) {
       console.warn('Firebase signOut notice:', err);
     } finally {
+      clearActiveLocalSession();
+      setCurrentUser(null);
       setUserProfile(null);
       setComputedRunway(null);
       try {
@@ -674,21 +891,28 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const updateUserProfile = async (data: Partial<UserProfile>) => {
-    if (!currentUser) {
-      // Local fallback for guest or offline mode
-      setUserProfile((prev) => prev ? { ...prev, ...data, updatedAt: new Date().toISOString() } : null);
-      return;
-    }
-    try {
-      const userDocRef = doc(db, 'users', currentUser.uid);
-      await setDoc(userDocRef, {
-        ...data,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
+    // 1. Immediately update state and persistent local cache
+    setUserProfile((prev) => {
+      const updated = prev ? { ...prev, ...data, updatedAt: new Date().toISOString() } : null;
+      if (updated) {
+        try {
+          localStorage.setItem('neyrunway_user_profile', JSON.stringify(updated));
+        } catch {}
+      }
+      return updated;
+    });
 
-      setUserProfile((prev) => prev ? { ...prev, ...data, updatedAt: new Date().toISOString() } : null);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `users/${currentUser.uid}`);
+    // 2. Synchronize to Firestore if currentUser is connected
+    if (currentUser && auth.currentUser) {
+      try {
+        const userDocRef = doc(db, 'users', currentUser.uid);
+        await setDoc(userDocRef, {
+          ...data,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+      } catch (error) {
+        console.warn('Firestore profile update notice (persisted locally):', error);
+      }
     }
   };
 

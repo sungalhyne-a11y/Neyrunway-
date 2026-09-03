@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useTranslation } from '../../i18n';
 import { SupportedLanguage } from '../../types';
@@ -20,6 +20,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
 
   const { signInWithEmail, signUpWithEmail, signInWithGoogle, signInGuest } = useAuth();
   const { t, language, setLanguage } = useTranslation();
+
+  // Sync mode when initialMode or isOpen changes
+  useEffect(() => {
+    if (isOpen) {
+      setMode(initialMode);
+      setErrorMessage(null);
+    }
+  }, [isOpen, initialMode]);
 
   if (!isOpen) return null;
 
@@ -188,13 +196,47 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
         </div>
 
         {/* Title & Subtitle */}
-        <div className="space-y-1.5 mb-6">
+        <div className="space-y-1.5 mb-5">
           <h3 className="text-xl sm:text-2xl font-light text-[#F5F5F0]">
             {mode === 'signIn' ? t.auth.titleSignIn : t.auth.titleSignUp}
           </h3>
           <p className="text-xs text-[#8A8F98] leading-relaxed">
             {mode === 'signIn' ? t.auth.subtitleSignIn : t.auth.subtitleSignUp}
           </p>
+        </div>
+
+        {/* Tab Switcher: Se connecter / Créer un compte */}
+        <div className="flex bg-[#0B0E17] p-1 rounded-2xl border border-[#1e293b] mb-5">
+          <button
+            id="tab-auth-signin"
+            type="button"
+            onClick={() => {
+              setMode('signIn');
+              setErrorMessage(null);
+            }}
+            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold transition-all cursor-pointer text-center ${
+              mode === 'signIn'
+                ? 'bg-[#1e293b] text-[#F5F5F0] shadow-sm'
+                : 'text-[#8A8F98] hover:text-[#F5F5F0]'
+            }`}
+          >
+            {t.auth.signInLink || (language === 'fr' ? 'Se connecter' : 'Sign In')}
+          </button>
+          <button
+            id="tab-auth-signup"
+            type="button"
+            onClick={() => {
+              setMode('signUp');
+              setErrorMessage(null);
+            }}
+            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold transition-all cursor-pointer text-center ${
+              mode === 'signUp'
+                ? 'bg-[#D4FF3D] text-[#0B0E17] shadow-sm font-bold'
+                : 'text-[#8A8F98] hover:text-[#F5F5F0]'
+            }`}
+          >
+            {t.auth.signUpLink || (language === 'fr' ? 'Créer un compte' : 'Sign Up')}
+          </button>
         </div>
 
         {/* Error Alert */}
@@ -204,10 +246,37 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
-              className="mb-4 p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-start gap-2.5"
+              className="mb-4 p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex flex-col gap-1.5"
             >
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span className="leading-relaxed">{errorMessage}</span>
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span className="leading-relaxed">{errorMessage}</span>
+              </div>
+              {/* Contextual quick fix links */}
+              {errorMessage === t.auth.errors.userNotFound && mode === 'signIn' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('signUp');
+                    setErrorMessage(null);
+                  }}
+                  className="mt-1 text-left text-[11px] font-semibold text-[#D4FF3D] hover:underline cursor-pointer"
+                >
+                  {language === 'fr' ? '→ Cliquez ici pour créer votre compte avec cet email' : '→ Click here to create your account with this email'}
+                </button>
+              )}
+              {errorMessage === t.auth.errors.emailInUse && mode === 'signUp' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('signIn');
+                    setErrorMessage(null);
+                  }}
+                  className="mt-1 text-left text-[11px] font-semibold text-[#D4FF3D] hover:underline cursor-pointer"
+                >
+                  {language === 'fr' ? '→ Cliquez ici pour vous connecter avec cet email' : '→ Click here to log in with this email'}
+                </button>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -274,7 +343,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
                 type="email"
                 required
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (errorMessage) setErrorMessage(null);
+                }}
                 placeholder={t.auth.emailPlaceholder}
                 className="w-full px-4 py-2.5 rounded-2xl bg-[#0B0E17] border border-[#1e293b] focus:border-[#D4FF3D] text-xs text-[#F5F5F0] placeholder-[#8A8F98]/50 outline-none transition-all pl-9"
               />
@@ -293,7 +365,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
                 required
                 minLength={6}
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (errorMessage) setErrorMessage(null);
+                }}
                 placeholder={t.auth.passwordPlaceholder}
                 className="w-full px-4 py-2.5 rounded-2xl bg-[#0B0E17] border border-[#1e293b] focus:border-[#D4FF3D] text-xs text-[#F5F5F0] placeholder-[#8A8F98]/50 outline-none transition-all pl-9"
               />
@@ -311,7 +386,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
               <Loader2 className="w-4 h-4 animate-spin text-[#0B0E17]" />
             ) : (
               <>
-                <span>{mode === 'signIn' ? t.auth.signInButton : t.auth.signUpButton}</span>
+                <span>
+                  {mode === 'signIn'
+                    ? (t.auth.signInButton || (language === 'fr' ? 'Se connecter' : 'Sign In'))
+                    : (t.auth.signUpButton || (language === 'fr' ? 'Créer mon compte' : 'Create Account'))}
+                </span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </>
             )}

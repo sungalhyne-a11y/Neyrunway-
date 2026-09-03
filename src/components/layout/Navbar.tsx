@@ -38,6 +38,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate }) => {
   } = useAuth();
   
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authInitialMode, setAuthInitialMode] = useState<'signIn' | 'signUp'>('signIn');
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
@@ -259,15 +260,31 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate }) => {
                 </AnimatePresence>
               </div>
             ) : (
-              /* Enhanced Log In / Connexion Button - Visible & optimized on Mobile */
-              <button
-                id="btn-nav-open-auth"
-                onClick={() => setShowAuthModal(true)}
-                className="group relative flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 min-h-[38px] sm:min-h-[44px] rounded-full bg-[#D4FF3D] hover:bg-[#C2F028] text-[#0B0E17] text-xs font-bold transition-all duration-200 shadow-[0_0_16px_rgba(212,255,61,0.25)] hover:shadow-[0_0_24px_rgba(212,255,61,0.4)] cursor-pointer active:scale-95 shrink-0 whitespace-nowrap"
-              >
-                <LogIn className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 transition-transform group-hover:translate-x-0.5" />
-                <span className="tracking-wide">{t.nav.signIn || (language === 'fr' ? 'Connexion' : 'Sign In')}</span>
-              </button>
+              /* Enhanced Auth Group: Connexion & Créer un compte */
+              <div className="flex items-center gap-2">
+                <button
+                  id="btn-nav-open-signin"
+                  onClick={() => {
+                    setAuthInitialMode('signIn');
+                    setShowAuthModal(true);
+                  }}
+                  className="hidden sm:flex items-center justify-center px-3.5 py-2 min-h-[38px] rounded-full bg-[#161b27] hover:bg-[#1e293b] text-[#F5F5F0] border border-[#1e293b] text-xs font-semibold transition-all cursor-pointer whitespace-nowrap active:scale-95"
+                >
+                  <span>{t.nav.signIn || (language === 'fr' ? 'Connexion' : 'Sign In')}</span>
+                </button>
+
+                <button
+                  id="btn-nav-open-signup"
+                  onClick={() => {
+                    setAuthInitialMode('signUp');
+                    setShowAuthModal(true);
+                  }}
+                  className="group relative flex items-center justify-center gap-1.5 sm:gap-2 px-3.5 sm:px-5 py-2 min-h-[38px] rounded-full bg-[#D4FF3D] hover:bg-[#C2F028] text-[#0B0E17] text-xs font-bold transition-all duration-200 shadow-[0_0_16px_rgba(212,255,61,0.25)] hover:shadow-[0_0_24px_rgba(212,255,61,0.4)] cursor-pointer active:scale-95 shrink-0 whitespace-nowrap"
+                >
+                  <LogIn className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 transition-transform group-hover:translate-x-0.5" />
+                  <span className="tracking-wide">{language === 'fr' ? 'Créer mon compte' : 'Sign Up'}</span>
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -275,6 +292,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate }) => {
 
       <AuthModal
         isOpen={showAuthModal}
+        initialMode={authInitialMode}
         onClose={() => setShowAuthModal(false)}
       />
     </>
