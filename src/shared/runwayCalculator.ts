@@ -189,14 +189,21 @@ export function calculateDecisionSimulation(input: DecisionSimulationInput): Dec
 
   const postBalance = Math.max(0, currentBalance - simulatedAmount);
 
-  // Projected daily burn based on fixed obligations and baseline variable spend
+  // Effective daily burn based on current financial horizon or obligations
   const dailyFixedPortion = totalFixedExpenses > 0 ? totalFixedExpenses / 30 : 0;
   const dailyVariableBaseline = Math.max(10, safeToSpendToday);
-  const totalDailyBurn = Math.max(10, dailyFixedPortion + dailyVariableBaseline);
+  const totalDailyBurn = (runwayDays > 0 && currentBalance > 0)
+    ? Math.max(10, currentBalance / runwayDays)
+    : Math.max(10, dailyFixedPortion + dailyVariableBaseline);
 
-  let projectedDays = 0;
-  if (postBalance > 0 && totalDailyBurn > 0) {
-    projectedDays = Math.max(0, Math.floor(postBalance / totalDailyBurn));
+  let projectedDays = runwayDays;
+  if (simulatedAmount <= 0) {
+    projectedDays = runwayDays;
+  } else if (postBalance <= 0) {
+    projectedDays = 0;
+  } else {
+    const daysConsumed = Math.min(runwayDays, Math.max(1, Math.round(simulatedAmount / totalDailyBurn)));
+    projectedDays = Math.max(0, runwayDays - daysConsumed);
   }
 
   // Impact on safe to spend

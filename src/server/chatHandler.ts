@@ -29,6 +29,7 @@ export interface ChatRequestBody {
     totalFixedExpenses?: number;
     goals?: Array<{ name: string; targetAmount: number; currentAmount: number }>;
     fixedExpenses?: Array<{ title: string; amount: number }>;
+    memorySummary?: any;
   };
   simulation?: {
     amount: number;
@@ -53,12 +54,30 @@ export async function processChatRequest(body: ChatRequestBody): Promise<any> {
   const nextIncomeAmount = userContext?.nextIncomeAmount ?? 0;
   const nextIncomeSource = userContext?.nextIncomeSource || '';
   const totalFixedExpenses = userContext?.totalFixedExpenses ?? 450;
+  const memorySummary = userContext?.memorySummary;
+  const habits = memorySummary?.habits;
+  const opportunity = memorySummary?.opportunity;
+  const candidateSuggestions = memorySummary?.candidateSuggestions;
+  const commitments = memorySummary?.commitments;
+
+  const habitSummary = habits 
+    ? `Dépenses variables ce mois: ${habits.totalVariableSpentThisMonth}${currency}, Dépenses transport: ${habits.transportSpendThisMonth}${currency} (vs référence: ${habits.transportBaselineAvg}${currency}, variation: ${habits.transportShiftPercent >= 0 ? '+' : ''}${habits.transportShiftPercent}%), Catégorie dominante: ${habits.topExpenseCategory}. Observation: ${habits.habitInsight}`
+    : 'Habitudes en cours d\'apprentissage';
+
+  const opportunitySummary = opportunity
+    ? `Dispositif identifié (${opportunity.signalType}) : "${opportunity.resourceTitle}" proposé par ${opportunity.provider}. Impact potentiel: ${opportunity.potentialImpact}. Pourquoi: ${opportunity.explanationWhy}. Prudence: ${opportunity.prudenceNotice}`
+    : 'Aucune aide spécifique prioritaire pour le moment';
+
+  const commitmentsSummary = commitments?.items?.length
+    ? commitments.items.map((c: any) => `${c.title}: ${c.amount}${currency}/mois`).join(', ')
+    : (userContext?.fixedExpenses?.length
+        ? userContext.fixedExpenses.map((e: any) => `${e.title}: ${e.amount}${currency}/mois`).join(', ')
+        : 'Non spécifié');
+
   const goalsSummary = userContext?.goals?.length 
     ? userContext.goals.map((g: any) => `${g.name} (Cible: ${g.targetAmount}${currency}, Actuel: ${g.currentAmount}${currency})`).join(', ') 
     : 'Aucun objectif défini';
-  const fixedExpensesSummary = userContext?.fixedExpenses?.length
-    ? userContext.fixedExpenses.map((e: any) => `${e.title}: ${e.amount}${currency}/mois`).join(', ')
-    : 'Non spécifié';
+  const fixedExpensesSummary = commitmentsSummary;
 
   const latestUserMessage = (messages?.[messages.length - 1]?.content || (messages?.[messages.length - 1] as any)?.text || '').trim();
   const isFrench = !latestUserMessage 
@@ -257,6 +276,154 @@ Do you currently receive housing allowance or scholarships, or would you like to
       return { content: responseText, scenario: null, followUpOptions };
     }
 
+    // 3.1. Transport Spending, Mobility Habits & Student Opportunities
+    if (/transport|transports|navigo|imagine r|train|métro|bus|vélo|uber|taxi|transit|mobilit/i.test(q)) {
+      if (isFrench) {
+        const shiftText = habits && habits.transportShiftPercent > 0
+          ? `Tes dépenses de transport sont actuellement **${habits.transportShiftPercent}% supérieures** à ta référence habituelle (${habits.transportSpendThisMonth} ${currency} ce mois-ci contre une moyenne de ${habits.transportBaselineAvg} ${currency}).`
+          : `Tes dépenses de transport sont sous contrôle (${habits ? habits.transportSpendThisMonth : 45} ${currency} enregistrés ce mois-ci).`;
+
+        const oppText = opportunity
+          ? `\n\n🎯 **Opportunité étudiante ciblée :**\nNey a identifié le dispositif **« ${opportunity.resourceTitle} »** (${opportunity.provider}).\n- **Gain potentiel estimé** : ${opportunity.potentialImpact}\n- **Raison** : ${opportunity.explanationWhy}\n- *Prudence* : ${opportunity.prudenceNotice}`
+          : `\n\n💡 Pense à vérifier les abonnements jeunes locaux (ex: forfait Imagine R ou cartes régionales TER étudiantes).`;
+
+        responseText = `Voici l'analyse de tes mobilités et charges de transport par **Neyrunway** :
+
+${shiftText}${oppText}
+
+🧭 **Options d'action concrètes :**
+- **Option A (Vérifier l'aide ciblée)** : Consulter le portail officiel pour vérifier ton éligibilité et alléger ton budget transport.
+- **Option B (Sanctualiser l'abonnement)** : Si cette dépense est mensuelle, confirme-la en charge fixe dans l'onglet Mémoire pour que Ney la protège dans ton horizon.
+- **Option C (Simuler un déplacement)** : Tu peux simuler un trajet ou voyage pour voir immédiatement son impact sur tes ${runwayDays} jours d'autonomie.
+
+💬 **Échange avec Ney :**
+Possèdes-tu déjà un abonnement étudiant annuel ou prends-tu des billets au trajet ?`;
+
+        followUpOptions = [
+          { label: '🎯 Détails sur l\'aide transport', prompt: 'Peux-tu me détailler l\'aide transport détectée par Ney ?', type: 'action' },
+          { label: '🔄 Déclarer mon forfait en charge fixe', prompt: 'Comment déclarer mon forfait transport en charge fixe récurrente ?', type: 'alternative' },
+          { label: '🚄 Simuler un trajet train de 45€', prompt: 'Puis-je m\'offrir un billet de train de 45€ ce week-end ?', type: 'action' }
+        ];
+      } else {
+        const shiftText = habits && habits.transportShiftPercent > 0
+          ? `Your transport spending is currently **${habits.transportShiftPercent}% higher** than your historical baseline (${habits.transportSpendThisMonth} ${currency} this month vs ${habits.transportBaselineAvg} ${currency} baseline).`
+          : `Your transit spending is currently stable (${habits ? habits.transportSpendThisMonth : 45} ${currency} recorded this month).`;
+
+        const oppText = opportunity
+          ? `\n\n🎯 **Matched Student Opportunity:**\nNey flagged **« ${opportunity.resourceTitle} »** (${opportunity.provider}).\n- **Potential Relief**: ${opportunity.potentialImpact}\n- **Why**: ${opportunity.explanationWhy}\n- *Prudence*: ${opportunity.prudenceNotice}`
+          : `\n\n💡 Check out student transit passes in your regional campus resources.`;
+
+        responseText = `Here is Ney's mobility & transit memory analysis:
+
+${shiftText}${oppText}
+
+🧭 **Action Pathways:**
+- **Option A (Verify student grant)**: Review official eligibility rules to lower your recurring mobility costs.
+- **Option B (Lock in as commitment)**: If it is a monthly pass, mark it as a fixed expense in Memory so Ney protects your rent buffer.
+- **Option C (Simulate a travel ticket)**: Test the impact of an upcoming trip on your ${runwayDays} days of runway.
+
+💬 **Ney's Question for you:**
+Do you currently subscribe to an annual student transit pass or pay on demand?`;
+
+        followUpOptions = [
+          { label: '🎯 Explore transit grant details', prompt: 'Can you explain the student transit grant details?', type: 'action' },
+          { label: '🔄 Mark transit pass as fixed', prompt: 'How do I mark my transit subscription as a fixed expense?', type: 'alternative' },
+          { label: '🚄 Simulate a $45 travel fare', prompt: 'Can I afford a $45 transit fare this weekend?', type: 'action' }
+        ];
+      }
+      return { content: responseText, scenario: null, followUpOptions };
+    }
+
+    // 3.2. Next Move Recommendation Rationale ("Pourquoi ce conseil ?")
+    if (/pourquoi.*(conseil|next move|recommandation|action|aide)|why.*(recommendation|next move|advice)/i.test(q)) {
+      if (isFrench) {
+        responseText = `Le conseil prioritaire (**Next Move**) affiché sur ton tableau de bord est calculé directement par le moteur de **Money Memory** de Ney :
+
+1. **Charges sanctuarisées** : Ney prend d'abord en compte tes charges fixes (${commitmentsSummary}) pour s'assurer que ton prochain loyer et tes échéances vitales ne soient jamais compromis.
+2. **Habitudes et dérives** : Ney surveille en temps réel ton rythme de dépenses variables (${habits?.habitInsight || 'analyse de tes habitudes de consommation'}).
+3. **Opportunités sans saisie lourde** : ${opportunity ? `Ney a croisé tes dépenses avec le dispositif **« ${opportunity.resourceTitle} »** (${opportunity.provider}) pour te faire gagner du pouvoir d'achat.` : 'Ney recherche en continu des aides adaptées à ta région et à ton rythme.'}
+
+🧭 **Principe directeur de Ney :**
+*L'IA conseille. Vous décidez.* Cette recommandation n'est jamais un ordre, mais un repère éclairé pour t'aider à maximiser ton autonomie sereine.
+
+💬 **Échange avec Ney :**
+Souhaites-tu mettre en application cette recommandation ou simuler une autre décision financière ?`;
+
+        followUpOptions = [
+          { label: '🚀 Mettre en application le conseil', prompt: 'Comment concrétiser ce conseil prioritaire ?', type: 'action' },
+          { label: '📊 Revoir mon runway actuel', prompt: 'Quel est mon runway et mon disponible serein ?', type: 'question' },
+          { label: '🔍 Simuler une dépense', prompt: 'Puis-je m\'offrir un achat plaisir de 30€ ?', type: 'scenario' }
+        ];
+      } else {
+        responseText = `The **Next Move** card on your dashboard is calculated directly by Ney's **Money Memory engine**:
+
+1. **Secured Commitments**: Ney factors in your fixed expenses (${commitmentsSummary}) so your rent and core bills remain fully protected.
+2. **Habit Shifts**: Ney monitors variable burn rates and habit changes (${habits?.habitInsight || 'tracking daily variable pace'}).
+3. **Targeted Student Opportunities**: ${opportunity ? `Matched with **« ${opportunity.resourceTitle} »** (${opportunity.provider}) based on your real spending signals.` : 'Continuously screening student grants for your region.'}
+
+🧭 **Ney's Core Rule:**
+*AI advises. You decide.* This is an empowering navigational signal, never a rigid mandate.
+
+💬 **Ney's Question for you:**
+Would you like to put this move into action or simulate another purchase?`;
+
+        followUpOptions = [
+          { label: '🚀 Act on this recommendation', prompt: 'How do I act on this next move recommendation?', type: 'action' },
+          { label: '📊 Review current runway', prompt: 'What is my current runway and safe daily spend?', type: 'question' },
+          { label: '🔍 Simulate an expense', prompt: 'Can I afford a $30 leisure expense?', type: 'scenario' }
+        ];
+      }
+      return { content: responseText, scenario: null, followUpOptions };
+    }
+
+    // 3.3. Inferred Pattern & Zero-Homework Detections
+    if (/abonnement.*détect|pattern|suggestion.*détect|détection sans saisie|zero-homework/i.test(q)) {
+      if (isFrench) {
+        const candidatesText = candidateSuggestions && candidateSuggestions.length > 0
+          ? `Ney a identifié ${candidateSuggestions.length} mouvement(s) régulier(s) susceptible(s) d'être un abonnement ou une charge fixe :\n` + candidateSuggestions.map((c: any) => `• **${c.title}** (${c.amount} ${currency}) - ${c.message}`).join('\n')
+          : 'Aucune détection non confirmée en attente. Tes charges récurrentes connues sont déjà sanctuarisées dans ton runway.';
+
+        responseText = `Le concept de **Mémoire sans saisie lourde (Zero-Homework)** permet à Ney de déduire tes habitudes directement à partir de tes mouvements :
+
+${candidatesText}
+
+En confirmant un mouvement dans l'onglet **Mémoire (Transactions)** :
+- Il est automatiquement sanctuarisé dans tes charges fixes mensuelles.
+- Ton **Runway** et ton **Disponible quotidien serein** reflètent alors fidèlement ton véritable reste à vivre.
+
+💬 **Échange avec Ney :**
+Souhaites-tu confirmer une charge fixe ou vérifier une dépense en particulier ?`;
+
+        followUpOptions = [
+          { label: '📝 Voir mes transactions', prompt: 'Comment voir et gérer mes transactions enregistrées ?', type: 'action' },
+          { label: '🛡️ Vérifier mes charges fixes', prompt: 'Quelles sont mes charges fixes actuelles ?', type: 'question' },
+          { label: '📊 Calculer mon disponible', prompt: 'Quel est mon disponible quotidien serein ?', type: 'question' }
+        ];
+      } else {
+        const candidatesText = candidateSuggestions && candidateSuggestions.length > 0
+          ? `Ney flagged ${candidateSuggestions.length} recurring expense(s) that appear to be subscriptions:\n` + candidateSuggestions.map((c: any) => `• **${c.title}** (${c.amount} ${currency}) - ${c.message}`).join('\n')
+          : 'No pending recurring pattern suggestions at this time. Your known commitments are already locked into your runway.';
+
+        responseText = `Ney's **Zero-Homework Money Memory** identifies recurring commitments automatically from your transactions without manual data entry:
+
+${candidatesText}
+
+When you confirm a pattern in the **Memory (Transactions)** tab:
+- It is factored into your monthly fixed commitments.
+- Your **Runway** and **Safe Daily Spend** reflect your true financial autonomy.
+
+💬 **Ney's Question for you:**
+Would you like to confirm a recurring bill or inspect a specific transaction?`;
+
+        followUpOptions = [
+          { label: '📝 View my transactions', prompt: 'How do I view and manage my logged movements?', type: 'action' },
+          { label: '🛡️ Check my fixed bills', prompt: 'What are my current fixed commitments?', type: 'question' },
+          { label: '📊 Check my safe spend', prompt: 'What is my current safe daily spend?', type: 'question' }
+        ];
+      }
+      return { content: responseText, scenario: null, followUpOptions };
+    }
+
     // 4. Project Idea Capture & Dynamic Scoring Mission (Revenue, Demand, Urgency, Time)
     if (/project|projet|idea|idée|startup|score|priorit|business|lancer/i.test(q) && !/afford|acheter|dépense|abonner|abonnement|souscrire/i.test(q)) {
       const titleMatch = latestUserMessage.match(/(?:projet|project|idée|idea)\s*[:\-]?\s*["']?([^"'\n,]+)/i);
@@ -441,48 +608,78 @@ Do you prefer scheduling an automatic monthly contribution or topping up wheneve
       const diffDays = simResult.daysDifference;
 
       if (isFrench) {
+        const conclusion = scenarioBadge === 'GO'
+          ? `Cet achat de ${cost} ${currency} est absorbable par ta trésorerie actuelle.`
+          : scenarioBadge === 'WAIT'
+          ? `Il est préférable de temporiser jusqu'à ta prochaine rentrée du ${nextIncomeDate}.`
+          : scenarioBadge === 'ADJUST'
+          ? `C'est réalisable si tu adaptes légèrement tes dépenses des prochains jours.`
+          : `Cet achat réduit fortement ton matelas de sécurité avant tes échéances fixes.`;
+
+        const pourquoi = `Ton solde disponible de ${currentBalance} ${currency} et tes charges fixes de ${totalFixedExpenses} ${currency}/mois sont déjà pris en compte dans ton calcul.`;
+
         responseText = `[SCENARIO: ${scenarioBadge}]
 
-Voici l'analyse d'impact d'un montant de **${cost} ${currency}**${title ? ` pour *« ${title} »*` : ''} sur ton autonomie :
+### 💬 Analyse de Ney
 
+**RÉPONSE**
+${conclusion}
+
+**POURQUOI**
+${pourquoi}
+
+**IMPACT**
 - **Runway** : passe de **${runwayDays} jours** à **${newRunway} jours** (${diffDays > 0 ? `+${diffDays}` : diffDays}j)
 - **Disponible aujourd'hui** : passe de **${safeToSpendToday} ${currency}/j** à **${newSafe} ${currency}/j**
 
-${scenarioBadge === 'GO' ? 'Cet achat s\'intègre confortablement dans ta trésorerie sans menacer ton loyer ni tes charges fixes.' : scenarioBadge === 'WAIT' ? `Attendre la rentrée de ${nextIncomeSource ? nextIncomeSource + ' (' : ''}+${nextIncomeAmount} ${currency}${nextIncomeSource ? ')' : ''} prévue le ${nextIncomeDate} te permettrait de réaliser cet achat avec un confort total.` : scenarioBadge === 'ADJUST' ? 'C\'est faisable en ajustant tes dépenses variables quotidiennes de 2 à 3€ pendant quelques jours.' : 'Cet achat réduirait fortement ta marge de sécurité avant tes prochaines échéances fixes.'}
+**OPTIONS (L'IA conseille, vous décidez)**
+1. **Acheter maintenant** : tu confirmes ton choix en toute autonomie (ton runway devient ${newRunway} jours).
+2. **Attendre** : tu préserves tes ${runwayDays} jours intacts jusqu'au prochain virement (+${nextIncomeAmount} ${currency}).
+3. **Simuler un autre montant** : tester une alternative ou étaler la dépense.
 
-🧭 **Possibilités & Chemins d'action disponibles :**
-- **Option 1 (Paiement immédiat)** : Tu absorbes l'achat comptant, ton runway s'établit à ${newRunway} jours et ton disponible à ${newSafe} ${currency}/j.
-- **Option 2 (Attendre la rentrée du ${nextIncomeDate})** : Tu décales cet achat pour préserver ton disponible intact jusqu'au prochain virement (+${nextIncomeAmount} ${currency}).
-- **Option 3 (Compromis / Arbitrage)** : Tu réalises cet achat en modérant une autre sortie non indispensable cette semaine.
+*Rappel : Ney vous conseille et éclaire les conséquences, vous restez seul décideur de vos finances.*`;
 
-💬 **Échange avec Ney :**
-Quelle option correspond le mieux à tes priorités du moment ? Veux-tu qu'on teste une variante ou qu'on enregistre cette intention ?`;
         followUpOptions = [
-          { label: '✅ Option 1 : Valider et enregistrer', prompt: `J'opte pour l'achat immédiat de ${cost}€. Comment l'enregistrer dans ma mémoire ?`, type: 'action' },
-          { label: `⏳ Option 2 : Attendre le ${nextIncomeDate}`, prompt: `Je préfère attendre ma rentrée du ${nextIncomeDate}. Que me conseilles-tu d'ici là ?`, type: 'alternative' },
-          { label: '✂️ Option 3 : Où réduire 15€ ailleurs ?', prompt: 'Dans quelle catégorie puis-je arbitrer pour compenser cet achat ?', type: 'question' }
+          { label: '✅ J\'achète maintenant', prompt: `Je décide d'effectuer cet achat de ${cost}€. Comment l'enregistrer dans ma mémoire ?`, type: 'action' },
+          { label: `⏳ J'attends le ${nextIncomeDate}`, prompt: `Je choisis d'attendre ma rentrée du ${nextIncomeDate}. Quel est mon disponible d'ici là ?`, type: 'alternative' },
+          { label: '🔍 Simuler un autre montant', prompt: 'Puis-je simuler un montant différent pour comparer ?', type: 'question' }
         ];
       } else {
+        const conclusion = scenarioBadge === 'GO'
+          ? `This ${cost} ${currency} purchase can be absorbed by your current cash.`
+          : scenarioBadge === 'WAIT'
+          ? `It is safer to postpone until your scheduled deposit on ${nextIncomeDate}.`
+          : scenarioBadge === 'ADJUST'
+          ? `Doable if you slightly moderate daily discretionary spending over the next few days.`
+          : `This purchase significantly narrows your safety cushion before fixed bills.`;
+
+        const why = `Your liquid balance of ${currentBalance} ${currency} and monthly fixed bills of ${totalFixedExpenses} ${currency} are already accounted for.`;
+
         responseText = `[SCENARIO: ${scenarioBadge}]
 
-Here is the exact impact of a **${cost} ${currency}** expense${title ? ` for *« ${title} »*` : ''} on your financial autonomy:
+### 💬 Ney's Analysis
 
+**ANSWER**
+${conclusion}
+
+**WHY**
+${why}
+
+**IMPACT**
 - **Runway**: adjusts from **${runwayDays} days** to **${newRunway} days** (${diffDays > 0 ? `+${diffDays}` : diffDays}d)
 - **Safe to spend today**: adjusts from **${safeToSpendToday} ${currency}/day** to **${newSafe} ${currency}/day**
 
-${scenarioBadge === 'GO' ? 'This expense fits comfortably within your liquid cash without putting your upcoming rent or fixed subscriptions at risk.' : scenarioBadge === 'WAIT' ? `Waiting for your upcoming deposit (${nextIncomeSource || 'Inflow'} of +${nextIncomeAmount} ${currency}) on ${nextIncomeDate} will let you make this purchase stress-free.` : scenarioBadge === 'ADJUST' ? 'You can do this by trimming daily variable discretionary outings slightly over the next few days.' : 'This expense would leave very little buffer before your fixed commitments are due.'}
+**OPTIONS (AI advises. You decide.)**
+1. **Buy now**: you decide freely with full awareness (runway becomes ${newRunway} days).
+2. **Wait**: keep your ${runwayDays} days intact until your next inflow (+${nextIncomeAmount} ${currency}).
+3. **Simulate alternative**: test a lower amount or split timing.
 
-🧭 **Available Action Pathways:**
-- **Option 1 (Immediate Purchase)**: Absorb the cost upfront, bringing your runway to ${newRunway} days and safe daily spend to ${newSafe} ${currency}/day.
-- **Option 2 (Wait for Inflow on ${nextIncomeDate})**: Postpone until your scheduled deposit (+${nextIncomeAmount} ${currency}) to keep full flexibility.
-- **Option 3 (Trade-off & Offset)**: Proceed with the purchase while moderating another leisure outing this week.
+*Reminder: Ney advises to clarify consequences; you remain the sole decision maker.*`;
 
-💬 **Ney's Question for you:**
-Which option fits your current priorities best? Would you like to log this movement or simulate another amount?`;
         followUpOptions = [
-          { label: '✅ Option 1: Proceed & Log', prompt: `I want to proceed with the $${cost} expense. How do I log it into memory?`, type: 'action' },
-          { label: `⏳ Option 2: Wait until ${nextIncomeDate}`, prompt: `I will wait for my deposit on ${nextIncomeDate}. What is your advice until then?`, type: 'alternative' },
-          { label: '✂️ Option 3: Find $15 to offset', prompt: 'Where can I trim $15 in other categories to offset this?', type: 'question' }
+          { label: '✅ I Buy now', prompt: `I decide to proceed with this $${cost} purchase. How do I record it?`, type: 'action' },
+          { label: `⏳ I Wait until ${nextIncomeDate}`, prompt: `I choose to wait until ${nextIncomeDate}. What is my safe daily spend until then?`, type: 'alternative' },
+          { label: '🔍 Simulate another amount', prompt: 'Can I simulate a different amount to compare?', type: 'question' }
         ];
       }
       return { content: responseText, scenario: scenarioBadge, followUpOptions };
@@ -856,6 +1053,17 @@ USER FINANCIAL SNAPSHOT:
 - Monthly Fixed Commitments: ${totalFixedExpenses} ${currency}/month (${fixedExpensesSummary})
 - Next Deposit: ${nextIncomeSource} (+${nextIncomeAmount} ${currency}) on ${nextIncomeDate}
 - User Goals: ${goalsSummary}
+
+LONGITUDINAL MONEY MEMORY & STUDENT CONTEXT (ZERO-HOMEWORK INFERENCE):
+- Sanctuarized Fixed Commitments: ${commitmentsSummary}
+- Dynamic Spending Habits & Mobility: ${habitSummary}
+- Matched Student Financial Opportunity: ${opportunitySummary}
+- Candidate Inferred Patterns: ${candidateSuggestions?.length ? candidateSuggestions.map((s: any) => s.message).join(' | ') : 'Aucune détection en attente'}
+
+CRITICAL INSTRUCTION - MONEY MEMORY & OPPORTUNITIES ADVISING:
+- Whenever relevant to the user's inquiry (e.g. mobility, daily pace, next move, savings), reference their real habits and sanctuarized commitments.
+- If referencing student aid or grants, always pair it with realistic prudence ("éligibilité à vérifier auprès de l'organisme") while calculating the potential gain for their runway.
+- Remember: "AI advises. You decide." Empathetic, non-judgmental, constructive.
 ${activeSimulationData ? `
 EXACT CANONICAL SIMULATION COMPUTATION (MANDATORY TO MATCH DASHBOARD 100%):
 - Proposed Expense: "${activeSimulationData.expenseTitle || 'Dépense'}" for ${activeSimulationData.simulatedAmount} ${currency}

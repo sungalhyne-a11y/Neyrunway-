@@ -44,7 +44,7 @@ interface ChatViewProps {
 
 export const ChatView: React.FC<ChatViewProps> = ({ initialQuery = '', onNavigate }) => {
   const { t, formatCurrency, formatDate, formatTime, formatDays, language, region, currency } = useTranslation();
-  const { currentUser, userProfile, computedRunway } = useAuth();
+  const { currentUser, userProfile, computedRunway, memorySummary } = useAuth();
   const { 
     runSimulationForAmount, 
     setSimulatedAmount, 
@@ -302,6 +302,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ initialQuery = '', onNavigat
         nextIncomeDate: nextIncomeDate ? formatDate(nextIncomeDate) : undefined,
         nextIncomeAmount,
         nextIncomeSource,
+        memorySummary,
       };
 
       // 8-second client-side timeout controller to prevent infinite spinner

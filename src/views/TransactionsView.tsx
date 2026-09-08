@@ -42,7 +42,18 @@ import { motion, AnimatePresence } from 'motion/react';
 
 export const TransactionsView: React.FC<{ onNavigateToChat?: (initialQuery?: string) => void }> = ({ onNavigateToChat }) => {
   const { t, formatCurrency, formatDate, language, region, currency } = useTranslation();
-  const { currentUser, userProfile, computedRunway, updateUserProfile, secondaryAuth, lockSensitiveViews, recomputeRunway } = useAuth();
+  const { 
+    currentUser, 
+    userProfile, 
+    computedRunway, 
+    updateUserProfile, 
+    secondaryAuth, 
+    lockSensitiveViews, 
+    recomputeRunway,
+    memorySummary,
+    confirmTransactionPattern,
+    dismissPatternSuggestion
+  } = useAuth();
   const { showBudgetWarning, showToast } = useToast();
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -189,6 +200,17 @@ export const TransactionsView: React.FC<{ onNavigateToChat?: (initialQuery?: str
   const isBudgetExceeded = currentMonthSpent > currentBudgetGoal;
   const budgetExcess = Math.max(0, currentMonthSpent - currentBudgetGoal);
   const budgetPercentage = Math.round((currentMonthSpent / Math.max(1, currentBudgetGoal)) * 100);
+
+  // Contextual Insights for Decision-Support (Money Memory: UNDERSTAND -> CONTEXT)
+  const housingCommitment = useMemo(() => {
+    return transactions.find((tx) => tx.category === 'housing' && (tx.isRecurring || tx.type === 'fixed'));
+  }, [transactions]);
+
+  const transportSpent = useMemo(() => {
+    return transactions
+      .filter((tx) => tx.category === 'transport')
+      .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+  }, [transactions]);
 
   // Trigger Budget Warning Toast manually / test
   const triggerBudgetWarningToast = (customSpent?: number, customGoal?: number, txTitle?: string, txAmount?: number) => {
@@ -465,22 +487,165 @@ export const TransactionsView: React.FC<{ onNavigateToChat?: (initialQuery?: str
         </div>
       </header>
 
-      {/* Ney AI Learning Notice Banner */}
-      <div className="p-4 sm:p-5 rounded-3xl bg-[#161b27] border border-[#1e293b] flex items-start gap-3.5 shadow-xl">
-        <div className="p-2.5 rounded-2xl bg-[#D4FF3D]/10 text-[#D4FF3D] border border-[#D4FF3D]/20 shrink-0">
-          <Brain className="w-5 h-5" />
+      {/* Ney AI Learning Notice Banner & Money Memory Decision Context */}
+      <div className="p-5 rounded-3xl bg-[#161b27] border border-[#1e293b] space-y-3.5 shadow-xl">
+        <div className="flex items-start gap-3.5">
+          <div className="p-2.5 rounded-2xl bg-[#D4FF3D]/10 text-[#D4FF3D] border border-[#D4FF3D]/20 shrink-0">
+            <Brain className="w-5 h-5" />
+          </div>
+          <div className="space-y-1">
+            <h4 className="text-xs sm:text-sm font-semibold text-[#F5F5F0] flex items-center gap-2">
+              <span>{t.views.transactions.memoryPurpose}</span>
+              <span className="text-[10px] text-[#D4FF3D] font-mono font-normal">
+                (CONTEXTE DÉCISIONNEL • PAS UN SIMPLE HISTORIQUE)
+              </span>
+            </h4>
+            <p className="text-xs text-[#8A8F98] leading-relaxed">
+              {t.views.transactions.learningNotice}
+            </p>
+          </div>
         </div>
-        <div className="space-y-1">
-          <h4 className="text-xs sm:text-sm font-semibold text-[#F5F5F0] flex items-center gap-2">
-            <span>{t.views.transactions.memoryPurpose}</span>
-            <span className="text-[10px] text-[#8A8F98] font-mono font-normal">
-              (Mental Model: UNDERSTAND → FORECAST)
+
+        {/* Money Memory: Context for decision-making */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-[#1e293b]/70 text-xs font-mono">
+          <div className="p-2.5 rounded-xl bg-[#0B0E17]/60 border border-[#1e293b] text-[#8A8F98]">
+            <span className="text-[10px] uppercase text-[#38BDF8] block font-bold">
+              {language === 'fr' ? 'Échéance sanctuarisée' : 'Secured Commitment'}
             </span>
-          </h4>
-          <p className="text-xs text-[#8A8F98] leading-relaxed">
-            {t.views.transactions.learningNotice}
-          </p>
+            <span className="text-[#F5F5F0] text-[11px] mt-0.5 block">
+              {housingCommitment 
+                ? (language === 'fr' 
+                    ? `Ton prochain loyer (${formatCurrency(housingCommitment.amount)}) est déjà pris en compte dans ton runway.`
+                    : `Next rent (${formatCurrency(housingCommitment.amount)}) is already accounted for in your runway.`)
+                : (language === 'fr'
+                    ? `Charges fixes (${formatCurrency(computedRunway?.totalFixedExpenses ?? 420)}/mois) déduites de ton horizon.`
+                    : `Fixed commitments (${formatCurrency(computedRunway?.totalFixedExpenses ?? 420)}/mo) deducted.`)}
+            </span>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-[#0B0E17]/60 border border-[#1e293b] text-[#8A8F98]">
+            <span className="text-[10px] uppercase text-[#D4FF3D] block font-bold">
+              {language === 'fr' ? 'Poste sous surveillance' : 'Monitored Spending'}
+            </span>
+            <span className="text-[#F5F5F0] text-[11px] mt-0.5 block">
+              {transportSpent > 0 
+                ? (language === 'fr'
+                    ? `Transports à ${formatCurrency(transportSpent)} ce mois : suivi par Ney pour affiner les simulations.`
+                    : `Transit at ${formatCurrency(transportSpent)} this month: monitored by Ney for simulations.`)
+                : (language === 'fr'
+                    ? `Dépenses de vie de ${formatCurrency(currentMonthSpent)} ce mois-ci.`
+                    : `Living expenses at ${formatCurrency(currentMonthSpent)} this month.`)}
+            </span>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-[#0B0E17]/60 border border-[#1e293b] text-[#8A8F98] flex flex-col justify-between">
+            <span className="text-[10px] uppercase text-[#FACC15] block font-bold">
+              {language === 'fr' ? 'Règle décisionnelle' : 'Decision Rule'}
+            </span>
+            <span className="text-[#F5F5F0] text-[11px] mt-0.5 block">
+              {language === 'fr'
+                ? 'L\'IA conseille à partir de ces repères. Vous décidez seul de vos achats.'
+                : 'AI advises using this context. You decide all purchases.'}
+            </span>
+          </div>
         </div>
+
+        {/* Lightweight "Memory without homework" Pattern Suggestion */}
+        {memorySummary.candidateSuggestions.length > 0 && (
+          <div className="space-y-2 pt-2 border-t border-[#1e293b]/70">
+            {memorySummary.candidateSuggestions.map((suggestion) => (
+              <div 
+                key={suggestion.id}
+                className="p-3.5 rounded-2xl bg-[#0B0E17] border border-[#D4FF3D]/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="p-2 rounded-xl bg-[#D4FF3D]/10 text-[#D4FF3D] shrink-0 mt-0.5">
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] uppercase font-mono tracking-wider text-[#D4FF3D] font-bold">
+                        {language === 'fr' ? 'DÉTECTION SANS SAISIE LOURDE' : 'ZERO-HOMEWORK DETECTION'}
+                      </span>
+                      <span className="text-[9px] font-mono text-[#8A8F98] bg-[#161b27] px-2 py-0.5 rounded-full border border-[#1e293b]">
+                        {Math.round((suggestion.confidence ?? 0.85) * 100)}% {language === 'fr' ? 'confiance' : 'confidence'}
+                      </span>
+                    </div>
+                    <p className="text-xs sm:text-sm text-[#F5F5F0] font-medium mt-1">
+                      {suggestion.message}
+                    </p>
+                    <p className="text-[11px] text-[#8A8F98] mt-0.5">
+                      {language === 'fr' 
+                        ? 'En confirmant, Ney intègre cette charge directement dans tes calculs d\'horizon.' 
+                        : 'By confirming, Ney factors this expense directly into your runway forecast.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-auto shrink-0 font-mono text-xs">
+                  <button
+                    type="button"
+                    onClick={() => confirmTransactionPattern(suggestion.transactionId, { isRecurring: true, type: 'fixed' })}
+                    className="px-3 py-1.5 rounded-xl bg-[#D4FF3D] text-[#0B0E17] font-bold hover:bg-[#c2f028] transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>{language === 'fr' ? 'Confirmer' : 'Confirm'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => dismissPatternSuggestion(suggestion.id)}
+                    className="px-3 py-1.5 rounded-xl bg-[#161b27] text-[#8A8F98] hover:text-[#F5F5F0] border border-[#1e293b] hover:border-[#8A8F98] transition-colors cursor-pointer"
+                  >
+                    <span>{language === 'fr' ? 'Ignorer' : 'Dismiss'}</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Student Financial Opportunity Matching */}
+        {memorySummary.opportunity && (
+          <div className="pt-2 border-t border-[#1e293b]/70">
+            <div 
+              className="p-3 rounded-2xl bg-[#0B0E17]/80 border border-[#38BDF8]/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+            >
+              <div className="flex items-start gap-2.5">
+                <div className="p-1.5 rounded-lg bg-[#38BDF8]/10 text-[#38BDF8] shrink-0 mt-0.5">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-[#F5F5F0]">{memorySummary.opportunity.resourceTitle}</span>
+                    <span className="text-[10px] text-[#38BDF8] font-mono bg-[#38BDF8]/10 px-2 py-0.5 rounded-md border border-[#38BDF8]/20">
+                      {memorySummary.opportunity.provider}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#8A8F98] mt-0.5">
+                    {memorySummary.opportunity.potentialImpact}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                <span className="text-[10px] font-mono text-[#8A8F98]">
+                  {language === 'fr' ? 'Éligibilité à vérifier' : 'To verify'}
+                </span>
+                {memorySummary.opportunity.url && (
+                  <a
+                    href={memorySummary.opportunity.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-1 rounded-lg bg-[#0B0E17] hover:bg-[#38BDF8] text-[#38BDF8] hover:text-[#0B0E17] border border-[#38BDF8]/30 text-[11px] font-mono transition-all inline-flex items-center gap-1"
+                  >
+                    <span>{language === 'fr' ? 'Détails' : 'Details'}</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Monthly Budget Goal Tracker & Toast Alert Control */}

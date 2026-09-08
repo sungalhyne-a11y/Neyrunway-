@@ -123,6 +123,7 @@ export interface Goal {
   currentAmount: number;
   deadline?: string;
   category: 'emergency' | 'trip' | 'equipment' | 'tuition' | 'budget' | 'other';
+  status?: 'active' | 'completed';
   createdAt: string;
 }
 
@@ -218,5 +219,79 @@ export interface ToastMessage {
   onSecondaryAction?: () => void;
   secondaryActionLabel?: string;
   createdAt?: number;
+}
+
+export type MemoryDimension = 'commitments' | 'income' | 'habits' | 'goals';
+
+export interface CandidatePatternSuggestion {
+  id: string;
+  transactionId: string;
+  title: string;
+  amount: number;
+  category: TransactionCategory;
+  detectedPattern: 'recurring_subscription' | 'repeated_habit' | 'high_frequency';
+  message: string;
+  suggestedAction: 'mark_recurring' | 'adjust_category' | 'create_goal';
+  status: 'pending' | 'confirmed' | 'dismissed';
+  confidence?: number;
+}
+
+export interface FinancialOpportunityMatch {
+  signalType: 'high_transport' | 'high_housing' | 'food_budget_pressure' | 'low_runway_relief' | 'general_grant';
+  signalDescription: string;
+  resourceId: string;
+  resourceTitle: string;
+  provider: string;
+  category: ResourceCategory;
+  potentialImpact: string;
+  explanationWhy: string;
+  estimatedMonthlyGain?: number;
+  url?: string;
+  prudenceNotice: string;
+}
+
+export interface LongitudinalMemorySummary {
+  commitments: {
+    count: number;
+    monthlyTotal: number;
+    items: Transaction[];
+    nextCommitment?: {
+      title: string;
+      amount: number;
+      date?: string;
+    };
+  };
+  income: {
+    count: number;
+    monthlyProjected: number;
+    events: IncomeEvent[];
+    nextIncome?: {
+      source: string;
+      amount: number;
+      date?: string;
+      daysRemaining: number;
+    };
+  };
+  habits: {
+    totalVariableSpentThisMonth: number;
+    topExpenseCategory: string;
+    topExpenseAmount: number;
+    mostFrequentTitle?: string;
+    transportSpendThisMonth: number;
+    transportBaselineAvg: number;
+    transportShiftPercent: number;
+    foodSpendThisMonth: number;
+    dailyVariablePace: number;
+    habitInsight: string;
+  };
+  goals: {
+    count: number;
+    totalTarget: number;
+    totalCurrent: number;
+    items: Goal[];
+  };
+  candidateSuggestions: CandidatePatternSuggestion[];
+  opportunity?: FinancialOpportunityMatch;
+  moatSignalsCount: number;
 }
 

@@ -8,7 +8,7 @@ import {
   signOut as fbSignOut,
   signInAnonymously
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, onSnapshot, serverTimestamp, collection } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, collection } from 'firebase/firestore';
 import { auth, googleProvider, db } from '../lib/firebase';
 import { 
   UserProfile, 
@@ -17,9 +17,12 @@ import {
   SecondaryAuthSettings, 
   AppRoute,
   Transaction,
-  IncomeEvent
+  IncomeEvent,
+  Goal,
+  LongitudinalMemorySummary
 } from '../types';
 import { calculateRunway } from '../shared/runwayCalculator';
+import { analyzeMoneyMemory } from '../shared/moneyMemoryEngine';
 import { useTranslation } from '../i18n';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { 
@@ -88,6 +91,13 @@ interface AuthContextType {
   requestUnlock: (targetRoute?: AppRoute, onSuccess?: () => void) => void;
   closeLockModal: () => void;
   isRouteSensitive: (route: AppRoute) => boolean;
+  // Longitudinal Money Memory & Opportunities
+  transactions: Transaction[];
+  incomeEvents: IncomeEvent[];
+  goals: Goal[];
+  memorySummary: LongitudinalMemorySummary;
+  confirmTransactionPattern: (transactionId: string, updates: Partial<Transaction>) => Promise<void>;
+  dismissPatternSuggestion: (suggestionId: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -135,13 +145,181 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const latestTransactionsRef = useRef<Transaction[]>([]);
   const latestIncomeEventsRef = useRef<IncomeEvent[]>([]);
 
+  // Default sample movements with student context & unconfirmed pattern
+  const defaultSampleMovements: Transaction[] = [
+    {
+      id: 'sample-1',
+      userId: 'local',
+      title: region === 'BE' ? 'Loyer Kot' : region === 'CH' ? 'Loyer Logement' : 'Loyer Résidence Crous',
+      amount: region === 'CH' ? 750 : region === 'US' ? 650 : region === 'GB' ? 520 : region === 'CA' ? 600 : region === 'BE' ? 460 : 420,
+      category: 'housing',
+      type: 'fixed',
+      date: new Date(Date.now() - 3 * 86400000).toISOString().split('T')[0],
+      status: 'settled',
+      isRecurring: true,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'sample-2',
+      userId: 'local',
+      title: region === 'FR' ? 'Pass Navigo / Transports' : 'Pass Transports',
+      amount: region === 'CH' ? 30 : region === 'US' ? 35 : region === 'GB' ? 45 : region === 'BE' ? 12 : 38,
+      category: 'transport',
+      type: 'fixed',
+      date: new Date(Date.now() - 5 * 86400000).toISOString().split('T')[0],
+      status: 'settled',
+      isRecurring: true,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'sample-spotify',
+      userId: 'local',
+      title: 'Spotify Premium',
+      amount: 9.99,
+      category: 'leisure',
+      type: 'variable',
+      date: new Date(Date.now() - 4 * 86400000).toISOString().split('T')[0],
+      status: 'settled',
+      isRecurring: false,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'sample-uber-train',
+      userId: 'local',
+      title: 'Trajet Train / Métro ponctuel',
+      amount: 24,
+      category: 'transport',
+      type: 'variable',
+      date: new Date(Date.now() - 2 * 86400000).toISOString().split('T')[0],
+      status: 'settled',
+      isRecurring: false,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'sample-3',
+      userId: 'local',
+      title: 'Courses alimentaires',
+      amount: 42.5,
+      category: 'food',
+      type: 'variable',
+      date: new Date(Date.now() - 1 * 86400000).toISOString().split('T')[0],
+      status: 'settled',
+      isRecurring: false,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'sample-4',
+      userId: 'local',
+      title: 'Sortie & loisirs',
+      amount: 28,
+      category: 'leisure',
+      type: 'variable',
+      date: new Date(Date.now() - 2 * 86400000).toISOString().split('T')[0],
+      status: 'settled',
+      isRecurring: false,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  const defaultSampleGoals: Goal[] = [
+    {
+      id: 'goal-1',
+      userId: 'local',
+      name: language === 'en'
+        ? 'Emergency Safety Net (1 Month Buffer)'
+        : 'Matelas de sécurité (1 mois loyer Crous)',
+      targetAmount: region === 'CH' ? 800 : region === 'US' ? 700 : region === 'GB' ? 550 : 450,
+      currentAmount: region === 'CH' ? 350 : region === 'US' ? 300 : region === 'GB' ? 220 : 180,
+      category: 'emergency',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    }
+  ];
+
+  const [transactions, setTransactions] = useState<Transaction[]>(() => {
+    try {
+      const cachedTx = localStorage.getItem('neyrunway_transactions');
+      if (cachedTx) {
+        const parsed = JSON.parse(cachedTx);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return defaultSampleMovements;
+  });
+
+  const [incomeEvents, setIncomeEvents] = useState<IncomeEvent[]>(() => {
+    try {
+      const cachedInc = localStorage.getItem('neyrunway_income_events');
+      if (cachedInc) {
+        const parsed = JSON.parse(cachedInc);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+
+  const [goals, setGoals] = useState<Goal[]>(() => {
+    try {
+      const cached = localStorage.getItem('neyrunway_goals');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return defaultSampleGoals;
+  });
+
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<string[]>(() => {
+    try {
+      const cached = localStorage.getItem('neyrunway_dismissed_suggestions');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+
+  // Keep latest refs populated
+  useEffect(() => {
+    latestTransactionsRef.current = transactions;
+  }, [transactions]);
+
+  useEffect(() => {
+    latestIncomeEventsRef.current = incomeEvents;
+  }, [incomeEvents]);
+
+  // Compute longitudinal memory reactively
+  const memorySummary = React.useMemo(() => {
+    const raw = analyzeMoneyMemory({
+      transactions,
+      incomeEvents,
+      goals,
+      computedRunway,
+      region,
+      language,
+      currentBalance: computedRunway?.currentBalance ?? userProfile?.initialBalance ?? 1250,
+    });
+    return {
+      ...raw,
+      candidateSuggestions: raw.candidateSuggestions.filter(
+        (s) => !dismissedSuggestions.includes(s.id)
+      ),
+    };
+  }, [transactions, incomeEvents, goals, computedRunway, region, language, userProfile?.initialBalance, dismissedSuggestions]);
+
   // Initialize refs from localStorage cache
   useEffect(() => {
     try {
       const cachedTx = localStorage.getItem('neyrunway_transactions');
       if (cachedTx) {
         const parsed = JSON.parse(cachedTx);
-        if (Array.isArray(parsed)) latestTransactionsRef.current = parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          latestTransactionsRef.current = parsed;
+          setTransactions(parsed);
+        }
+      } else {
+        localStorage.setItem('neyrunway_transactions', JSON.stringify(defaultSampleMovements));
       }
     } catch {}
 
@@ -149,9 +327,70 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const cachedInc = localStorage.getItem('neyrunway_income_events');
       if (cachedInc) {
         const parsed = JSON.parse(cachedInc);
-        if (Array.isArray(parsed)) latestIncomeEventsRef.current = parsed;
+        if (Array.isArray(parsed)) {
+          latestIncomeEventsRef.current = parsed;
+          setIncomeEvents(parsed);
+        }
       }
     } catch {}
+  }, []);
+
+  const confirmTransactionPattern = useCallback(async (transactionId: string, updates: Partial<Transaction>) => {
+    if (currentUser && !currentUser.isAnonymous) {
+      try {
+        const docRef = doc(db, 'users', currentUser.uid, 'transactions', transactionId);
+        await updateDoc(docRef, {
+          ...updates,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (e) {
+        console.warn('Error updating pattern in Firestore:', e);
+      }
+    }
+
+    const next = latestTransactionsRef.current.map((tx) =>
+      tx.id === transactionId ? { ...tx, ...updates } : tx
+    );
+    latestTransactionsRef.current = next;
+    setTransactions(next);
+    try {
+      localStorage.setItem('neyrunway_transactions', JSON.stringify(next));
+    } catch {}
+
+    const bal = userProfileRef.current?.initialBalance ?? 1250;
+    const res = calculateRunway({
+      currentBalance: bal,
+      transactions: next,
+      incomeEvents: latestIncomeEventsRef.current,
+      referenceDate: new Date(),
+    });
+
+    const newComputed: ComputedRunway = {
+      runwayDays: res.runwayDays,
+      safeToSpendToday: res.safeToSpendToday,
+      projectedBurnPerDay: res.projectedBurnPerDay,
+      currentBalance: res.currentBalance,
+      daysUntilNextIncome: res.daysUntilNextIncome,
+      nextIncomeAmount: res.nextIncomeAmount,
+      nextIncomeDate: res.nextIncomeDate,
+      nextIncomeSource: res.nextIncomeSource,
+      totalFixedExpenses: res.totalFixedExpenses,
+      updatedAt: new Date().toISOString(),
+    };
+    setComputedRunway(newComputed);
+    try {
+      localStorage.setItem('neyrunway_computed_runway', JSON.stringify(newComputed));
+    } catch {}
+  }, [currentUser]);
+
+  const dismissPatternSuggestion = useCallback((suggestionId: string) => {
+    setDismissedSuggestions((prev) => {
+      const next = [...prev, suggestionId];
+      try {
+        localStorage.setItem('neyrunway_dismissed_suggestions', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
   }, []);
 
   const userProfileRef = useRef<UserProfile | null>(userProfile);
@@ -416,6 +655,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ...(d.data() as Omit<Transaction, 'id'>),
           }));
           latestTransactionsRef.current = currentTransactions;
+          setTransactions(currentTransactions);
           try {
             localStorage.setItem('neyrunway_transactions', JSON.stringify(currentTransactions));
           } catch {}
@@ -464,6 +704,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ...(d.data() as Omit<IncomeEvent, 'id'>),
           }));
           latestIncomeEventsRef.current = currentIncomes;
+          setIncomeEvents(currentIncomes);
           try {
             localStorage.setItem('neyrunway_income_events', JSON.stringify(currentIncomes));
           } catch {}
@@ -503,6 +744,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           console.warn('Income events listener notice:', error);
         });
 
+        // Setup real-time listener for goals
+        const goalsColRef = collection(db, 'users', user.uid, 'goals');
+        const unsubsGoals = onSnapshot(goalsColRef, (goalsSnap) => {
+          if (!goalsSnap.empty) {
+            const currentGoals: Goal[] = goalsSnap.docs.map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<Goal, 'id'>),
+            }));
+            setGoals(currentGoals);
+            try {
+              localStorage.setItem('neyrunway_goals', JSON.stringify(currentGoals));
+            } catch {}
+          }
+        }, (error) => {
+          console.warn('Goals listener notice:', error);
+        });
+
         setLoading(false);
 
         return () => {
@@ -510,6 +768,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           unsubsRunway();
           unsubsTransactions();
           unsubsIncomes();
+          unsubsGoals();
         };
       } else {
         const activeLocal = getActiveLocalSession();
@@ -1084,6 +1343,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         requestUnlock,
         closeLockModal,
         isRouteSensitive,
+        // Longitudinal Money Memory & Opportunities
+        transactions,
+        incomeEvents,
+        goals,
+        memorySummary,
+        confirmTransactionPattern,
+        dismissPatternSuggestion,
       }}
     >
       {children}
