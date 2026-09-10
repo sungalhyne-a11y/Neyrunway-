@@ -1,17 +1,33 @@
 import React, { useState } from 'react';
 import { useTranslation } from '../../i18n';
 import { useAuth } from '../../context/AuthContext';
-import { Compass, ArrowRight, Clock, ShieldCheck, Sparkles, AlertCircle, HelpCircle, Bus } from 'lucide-react';
+import { 
+  Compass, 
+  ArrowRight, 
+  Clock, 
+  ShieldCheck, 
+  Sparkles, 
+  AlertCircle, 
+  HelpCircle, 
+  Bus,
+  Layers,
+  CheckCircle2,
+  Zap,
+  SlidersHorizontal,
+  ChevronRight
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getPersonalizedNextMove } from '../../shared/moneyMemoryEngine';
 
 interface NextMoveCardProps {
   onAction?: (actionQuery?: string) => void;
   onNavigateToSimulator?: () => void;
+  onNavigateToMemory?: () => void;
 }
 
 export const NextMoveCard: React.FC<NextMoveCardProps> = ({ 
   onAction,
+  onNavigateToMemory,
 }) => {
   const { formatCurrency, language } = useTranslation();
   const { computedRunway, memorySummary } = useAuth();
@@ -37,6 +53,37 @@ export const NextMoveCard: React.FC<NextMoveCardProps> = ({
   const handleClick = () => {
     if (onAction) {
       onAction(move.query);
+    }
+  };
+
+  const trace = move.decisionTrace;
+
+  const getUncertaintyBadge = (level: string) => {
+    switch (level) {
+      case 'confirmed':
+        return {
+          label: language === 'fr' ? 'Confirmé' : 'Confirmed',
+          color: 'text-[#D4FF3D] bg-[#D4FF3D]/10 border-[#D4FF3D]/30',
+          icon: CheckCircle2,
+        };
+      case 'detected':
+        return {
+          label: language === 'fr' ? 'Détecté' : 'Detected',
+          color: 'text-[#FACC15] bg-[#FACC15]/10 border-[#FACC15]/30',
+          icon: Zap,
+        };
+      case 'estimated':
+        return {
+          label: language === 'fr' ? 'Estimé' : 'Estimated',
+          color: 'text-[#38BDF8] bg-[#38BDF8]/10 border-[#38BDF8]/30',
+          icon: Clock,
+        };
+      default:
+        return {
+          label: language === 'fr' ? 'À vérifier' : 'To verify',
+          color: 'text-[#A78BFA] bg-[#A78BFA]/10 border-[#A78BFA]/30',
+          icon: Sparkles,
+        };
     }
   };
 
@@ -69,9 +116,9 @@ export const NextMoveCard: React.FC<NextMoveCardProps> = ({
               <button
                 type="button"
                 onClick={() => setShowSignalWhy(!showSignalWhy)}
-                className="text-[10px] font-mono text-[#8A8F98] hover:text-[#F5F5F0] flex items-center gap-1 cursor-pointer underline ml-auto sm:ml-0"
+                className="text-[10px] font-mono text-[#8A8F98] hover:text-[#D4FF3D] flex items-center gap-1 cursor-pointer underline ml-auto sm:ml-0 transition-colors"
               >
-                <HelpCircle className="w-3 h-3 text-[#D4FF3D]" />
+                <HelpCircle className="w-3.5 h-3.5 text-[#D4FF3D]" />
                 <span>{language === 'fr' ? 'Pourquoi ce conseil ?' : 'Why this?'}</span>
               </button>
             </div>
@@ -114,58 +161,121 @@ export const NextMoveCard: React.FC<NextMoveCardProps> = ({
               </div>
             )}
 
-            {/* Structured "Why?" Signal Explanation Disclosure */}
+            {/* Structured Memory Trust & Decision Trace Disclosure */}
             <AnimatePresence>
               {showSignalWhy && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }}
-                  className="pt-2"
+                  className="pt-3"
                 >
-                  <div className="bg-[#0B0E17] border border-[#1e293b] rounded-2xl p-3.5 sm:p-4 text-xs space-y-2.5 font-mono">
-                    <div className="flex items-center justify-between border-b border-[#1e293b] pb-2">
-                      <span className="text-[10px] uppercase tracking-wider text-[#8A8F98]">
-                        {language === 'fr' ? 'EXPLICABILITÉ DU SIGNAL' : 'SIGNAL EXPLAINABILITY'}
-                      </span>
-                      <span className="text-[10px] text-[#D4FF3D]">
-                        {language === 'fr' ? 'Signal financier vérifié' : 'Verified financial signal'}
-                      </span>
+                  <div className="bg-[#0B0E17] border border-[#1e293b] rounded-2xl p-4 text-xs space-y-3.5">
+                    {/* Header */}
+                    <div className="flex items-center justify-between border-b border-[#1e293b] pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <Layers className="w-4 h-4 text-[#D4FF3D]" />
+                        <span className="text-[11px] font-mono font-bold tracking-wider text-[#F5F5F0] uppercase">
+                          {language === 'fr' ? 'CHAÎNE DE CONFIANCE & DÉCISION' : 'MEMORY TRUST & DECISION TRACE'}
+                        </span>
+                      </div>
+                      {trace && (
+                        <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                          {(() => {
+                            const badge = getUncertaintyBadge(trace.uncertaintyLevel);
+                            const BadgeIcon = badge.icon;
+                            return (
+                              <span className={`px-2 py-0.5 rounded-md border flex items-center gap-1 font-bold ${badge.color}`}>
+                                <BadgeIcon className="w-3 h-3" />
+                                <span>{badge.label}</span>
+                              </span>
+                            );
+                          })()}
+                        </div>
+                      )}
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[11px]">
-                      <div>
-                        <span className="text-[#8A8F98] uppercase text-[9px] block">
-                          {language === 'fr' ? 'CONSEIL (WHAT)' : 'ADVICE (WHAT)'}
+                    {/* Decision Trace Steps */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 font-mono text-[11px]">
+                      {/* 1. Signal */}
+                      <div className="p-2.5 rounded-xl bg-[#161b27]/70 border border-[#1e293b] space-y-1">
+                        <span className="text-[#8A8F98] text-[9px] uppercase tracking-wider block font-bold">
+                          1. {language === 'fr' ? 'SIGNAL DÉTECTÉ' : 'DETECTED SIGNAL'}
                         </span>
-                        <span className="text-[#F5F5F0] font-sans text-xs">
-                          {move.what}
+                        <p className="text-[#F5F5F0] font-sans font-medium text-xs">
+                          {trace?.signal || move.what}
+                        </p>
+                      </div>
+
+                      {/* 2. Memory Context */}
+                      <div className="p-2.5 rounded-xl bg-[#161b27]/70 border border-[#1e293b] space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[#8A8F98] text-[9px] uppercase tracking-wider block font-bold">
+                            2. {language === 'fr' ? 'MÉMOIRE UTILISÉE' : 'MEMORY USED'}
+                          </span>
+                          {trace?.memoryItem.amount !== undefined && (
+                            <span className="text-[#D4FF3D] font-bold text-xs">
+                              {formatCurrency(trace.memoryItem.amount)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[#F5F5F0] font-sans font-medium text-xs">
+                          {trace?.memoryItem.title || move.why}
+                        </p>
+                        <span className="text-[10px] text-[#8A8F98] block">
+                          {trace?.memoryItem.source}
+                        </span>
+                        {trace?.memoryItem.usedFor && (
+                          <span className="text-[9px] text-[#38BDF8] block">
+                            {language === 'fr' ? 'Utilisé pour : ' : 'Used for: '}
+                            {trace.memoryItem.usedFor.join(' • ')}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* 3. Reasoning */}
+                      <div className="p-2.5 rounded-xl bg-[#161b27]/70 border border-[#1e293b] space-y-1">
+                        <span className="text-[#8A8F98] text-[9px] uppercase tracking-wider block font-bold">
+                          3. {language === 'fr' ? 'RAISONNEMENT' : 'REASONING'}
+                        </span>
+                        <p className="text-[#FACC15] font-sans text-xs leading-relaxed">
+                          {trace?.reasoning || move.why}
+                        </p>
+                      </div>
+
+                      {/* 4. Impact */}
+                      <div className="p-2.5 rounded-xl bg-[#161b27]/70 border border-[#1e293b] space-y-1">
+                        <span className="text-[#8A8F98] text-[9px] uppercase tracking-wider block font-bold">
+                          4. {language === 'fr' ? 'IMPACT ESTIMÉ' : 'ESTIMATED IMPACT'}
+                        </span>
+                        <p className="text-[#38BDF8] font-sans font-semibold text-xs leading-relaxed">
+                          {trace?.impact || move.impact}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Footer: User Sovereignty & Direct Control */}
+                    <div className="pt-2 border-t border-[#1e293b] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-[11px]">
+                      <div className="text-[#8A8F98] flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-[#D4FF3D] shrink-0" />
+                        <span>
+                          {language === 'fr' 
+                            ? 'L\'IA conseille à partir de tes mouvements. Vous décidez toujours seul.' 
+                            : 'AI advises based on your history. You always decide alone.'}
                         </span>
                       </div>
-                      <div>
-                        <span className="text-[#8A8F98] uppercase text-[9px] block">
-                          {language === 'fr' ? 'POURQUOI (WHY)' : 'REASON (WHY)'}
-                        </span>
-                        <span className="text-[#D4FF3D] font-sans text-xs">
-                          {move.why}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[#8A8F98] uppercase text-[9px] block">
-                          {language === 'fr' ? 'IMPACT (IMPACT)' : 'IMPACT (IMPACT)'}
-                        </span>
-                        <span className="text-[#38BDF8] font-sans text-xs">
-                          {move.impact}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[#8A8F98] uppercase text-[9px] block">
-                          {language === 'fr' ? 'ACTION POSSIBLE' : 'ACTION (WHAT TO DO)'}
-                        </span>
-                        <span className="text-[#F5F5F0] font-sans text-xs">
-                          {move.actionLabel}
-                        </span>
-                      </div>
+
+                      {onNavigateToMemory && (
+                        <button
+                          type="button"
+                          onClick={onNavigateToMemory}
+                          className="px-3 py-1.5 rounded-xl bg-[#161b27] hover:bg-[#1e293b] text-[#D4FF3D] hover:text-[#c2f028] border border-[#1e293b] text-xs font-mono font-medium flex items-center gap-1.5 transition-colors cursor-pointer self-end sm:self-auto"
+                        >
+                          <SlidersHorizontal className="w-3 h-3" />
+                          <span>{language === 'fr' ? 'Gérer cette mémoire' : 'Manage this memory'}</span>
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </motion.div>
@@ -191,4 +301,5 @@ export const NextMoveCard: React.FC<NextMoveCardProps> = ({
     </div>
   );
 };
+
 

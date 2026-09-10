@@ -8,7 +8,11 @@ import {
   LongitudinalMemorySummary,
   CandidatePatternSuggestion,
   FinancialOpportunityMatch,
-  ResourceCategory
+  ResourceCategory,
+  MemoryTrace,
+  UncertaintyLevel,
+  MemorySource,
+  StudentLifeEvent
 } from '../types';
 import { REGIONAL_RESOURCES_DATA } from '../data/studentResources';
 
@@ -35,6 +39,7 @@ export interface PersonalizedNextMove {
   query: string;
   iconName: 'Bus' | 'Clock' | 'AlertCircle' | 'ShieldCheck' | 'Sparkles';
   financialOpportunity?: FinancialOpportunityMatch;
+  decisionTrace?: MemoryTrace;
 }
 
 // Known subscription patterns for lightweight zero-homework detection
@@ -60,9 +65,9 @@ export function analyzeMoneyMemory({
 }: AnalyzeMoneyMemoryParams): LongitudinalMemorySummary {
   const isFr = language === 'fr';
 
-  // 1. WHAT REPEATS — 01: COMMITMENTS
+  // 1. WHAT REPEATS — 01: COMMITMENTS (excluding disabled memories)
   const recurringTxs = transactions.filter(
-    (tx) => tx.isRecurring === true || tx.type === 'fixed' || tx.category === 'housing'
+    (tx) => (tx.isRecurring === true || tx.type === 'fixed' || tx.category === 'housing') && !tx.isDisabledInRunway
   );
 
   let monthlyFixedTotal = 0;
@@ -102,9 +107,9 @@ export function analyzeMoneyMemory({
     return sum + (inc.isRecurringMonthly ? inc.amount : (inc.amount / 3));
   }, 0);
 
-  // 3. WHAT HAPPENED & WHAT MATTERS — 03: HABITS
+  // 3. WHAT HAPPENED & WHAT MATTERS — 03: HABITS (excluding disabled memories)
   const variableTxs = transactions.filter(
-    (tx) => tx.isRecurring !== true && tx.type !== 'fixed'
+    (tx) => tx.isRecurring !== true && tx.type !== 'fixed' && !tx.isDisabledInRunway
   );
 
   const nowYearMonth = now.toISOString().slice(0, 7); // e.g. 2026-09
@@ -214,6 +219,83 @@ export function analyzeMoneyMemory({
     foodSpendThisMonth,
   });
 
+  // 7. STUDENT LIFE EVENTS LAYER
+  // Progressively understands student milestones: rentrée, voyage, déménagement, vacances, nouveau semestre, loyer, bourse, rentrée d'argent
+  const lifeEvents: StudentLifeEvent[] = [];
+
+  // Life Event 1: Rent / Housing Due
+  if (nextCommitment && nextCommitment.amount > 0) {
+    lifeEvents.push({
+      id: 'event-rent',
+      type: 'rent_due',
+      title: isFr ? 'Échéance Loyer & Charges' : 'Rent & Housing Due',
+      dateOrPeriod: nextCommitment.date || (isFr ? 'Début de mois' : 'Start of month'),
+      impactDescription: isFr
+        ? `Loyer de ${nextCommitment.amount} € sanctuarisé : ton disponible du jour ne met jamais ce montant en danger.`
+        : `Rent of €${nextCommitment.amount} ring-fenced: safe daily spend never jeopardizes this payment.`,
+      estimatedAmount: nextCommitment.amount,
+      status: 'ongoing',
+      suggestedPrompt: isFr
+        ? `Mon loyer de ${nextCommitment.amount}€ arrive bientôt. Comment garder assez jusqu'à ma prochaine rentrée ?`
+        : `My rent of €${nextCommitment.amount} is due soon. How do I keep enough until my next deposit?`,
+    });
+  }
+
+  // Life Event 2: Inflow / Grant Payout
+  if (nextIncomeEvent) {
+    const isGrant = /bourse|crous|caf|apl|aide|grant|scholarship/i.test(nextIncomeEvent.source);
+    lifeEvents.push({
+      id: 'event-income',
+      type: isGrant ? 'grant_payout' : 'income_inflow',
+      title: nextIncomeEvent.source,
+      dateOrPeriod: isFr ? `Dans ${daysUntilNext} jours` : `In ${daysUntilNext} days`,
+      impactDescription: isFr
+        ? `Rentrée de +${nextIncomeEvent.amount} € prévue. Attendre cette échéance te permet de préserver ton autonomie.`
+        : `Expected inflow of +€${nextIncomeEvent.amount}. Waiting for this date preserves your cushion.`,
+      financialImpactDays: Math.round(nextIncomeEvent.amount / Math.max(15, computedRunway?.safeToSpendToday || 24)),
+      estimatedAmount: nextIncomeEvent.amount,
+      status: 'upcoming',
+      suggestedPrompt: isFr
+        ? `Mon virement de +${nextIncomeEvent.amount}€ arrive dans ${daysUntilNext} jours. Que me conseilles-tu d'ici là ?`
+        : `My deposit of +€${nextIncomeEvent.amount} arrives in ${daysUntilNext} days. What do you recommend until then?`,
+    });
+  }
+
+  // Life Event 3: Transit / Trip / Rentrer chez soi
+  if (transportSpendThisMonth > 30 || goals.some(g => g.category === 'trip')) {
+    const tripGoal = goals.find(g => g.category === 'trip');
+    lifeEvents.push({
+      id: 'event-trip',
+      type: 'trip',
+      title: isFr ? 'Voyage & Visite aux proches' : 'Travel & Family Visit',
+      dateOrPeriod: isFr ? 'Ce mois-ci' : 'This month',
+      impactDescription: isFr
+        ? (tripGoal 
+            ? `Projet "${tripGoal.name}" (${tripGoal.targetAmount} €). Mettre de côté préserve ton horizon.` 
+            : `Trajets récents (${transportSpendThisMonth} €). Une aide transport pourrait réduire ce poste.`)
+        : `Transit spending (€${transportSpendThisMonth}). A transit pass discount could lower this line.`,
+      status: 'ongoing',
+      suggestedPrompt: isFr
+        ? 'Je peux rentrer chez moi ce week-end ? Quel impact sur mon runway ?'
+        : 'Can I go home this weekend? What impact on my runway?',
+    });
+  }
+
+  // Life Event 4: Semester & University Rhythm
+  lifeEvents.push({
+    id: 'event-semester',
+    type: 'semester_start',
+    title: isFr ? 'Rythme Universitaire & Semestre' : 'Academic Semester Rhythm',
+    dateOrPeriod: isFr ? 'Semestre en cours' : 'Ongoing term',
+    impactDescription: isFr
+      ? 'Examens, fournitures et abonnements : adapter le rythme journalier maintient ton horizon prévisionnel stable.'
+      : 'Classes, supplies and passes: pacing daily spending keeps your projected runway stable.',
+    status: 'ongoing',
+    suggestedPrompt: isFr
+      ? 'Pourquoi mon argent part aussi vite ce semestre et comment me réajuster ?'
+      : 'Why is my money going so fast this semester and how do I adjust?',
+  });
+
   const moatSignalsCount = transactions.length + activeIncomes.length + recurringTxs.length + goals.length;
 
   return {
@@ -260,6 +342,7 @@ export function analyzeMoneyMemory({
     candidateSuggestions: candidateSuggestions.slice(0, 3),
     opportunity: matchedOpportunity,
     moatSignalsCount,
+    lifeEvents,
   };
 }
 
@@ -431,11 +514,11 @@ export function getPersonalizedNextMove(
       badge: isFr ? 'Habitude surveillée' : 'Monitored Habit',
       badgeColor: 'text-[#FACC15] bg-[#FACC15]/10 border-[#FACC15]/30',
       title: isFr
-        ? `Tes dépenses de transport sont ${memory.habits.transportShiftPercent} % au-dessus de ton niveau habituel`
-        : `Your transit spending is ${memory.habits.transportShiftPercent}% above your usual baseline`,
+        ? `Tu dépenses plus en transport cette semaine. Une aide pourrait réduire ce coût.`
+        : `You're spending more on transit this week. A pass discount could help.`,
       message: isFr
-        ? `Tes sorties transport atteignent ${formatCurrency(memory.habits.transportSpendThisMonth)} ce mois. Modérer les trajets d'ici ta rentrée préserve ton autonomie.`
-        : `Your transit costs reached ${formatCurrency(memory.habits.transportSpendThisMonth)} this month. Pacing rides until your deposit protects your runway.`,
+        ? `Tes sorties transport atteignent ${formatCurrency(memory.habits.transportSpendThisMonth)} ce mois (+${memory.habits.transportShiftPercent}%). Modérer les trajets d'ici ta rentrée préserve ton autonomie.`
+        : `Your transit costs reached ${formatCurrency(memory.habits.transportSpendThisMonth)} this month (+${memory.habits.transportShiftPercent}%). Pacing rides until your deposit protects your runway.`,
       what: isFr
         ? `Modère les trajets ponctuels non urgents d'ici ta rentrée.`
         : `Pace discretionary rides until your upcoming deposit.`,
@@ -443,14 +526,42 @@ export function getPersonalizedNextMove(
         ? `Tes sorties transport (${formatCurrency(memory.habits.transportSpendThisMonth)}) dépassent ta moyenne habituelle de ${formatCurrency(memory.habits.transportBaselineAvg)}/mois.`
         : `Your transit spending (${formatCurrency(memory.habits.transportSpendThisMonth)}) exceeds your typical baseline of ${formatCurrency(memory.habits.transportBaselineAvg)}/mo.`,
       impact: isFr
-        ? `Cette temporisation préserve 2 à 3 jours de runway intacts.`
-        : `This pacing keeps 2 to 3 days of runway intact.`,
+        ? `Cette temporisation préserve 2 à 3 jours de runway intacts. À toi de voir.`
+        : `This pacing keeps 2 to 3 days of runway intact. Up to you.`,
       actionLabel: opp ? (isFr ? 'Explorer l\'aide transport' : 'Explore transit aid') : (isFr ? 'Voir pourquoi' : 'See why'),
       query: isFr
         ? `Mes dépenses de transport sont ${memory.habits.transportShiftPercent}% plus élevées ce mois-ci. Comment me réajuster et quelles aides transport puis-je solliciter ?`
         : `My transit spending is ${memory.habits.transportShiftPercent}% higher this month. How can I adjust and what student transit pass could help?`,
       iconName: 'Bus',
       financialOpportunity: opp,
+      decisionTrace: {
+        signal: isFr
+          ? `Hausse de ${memory.habits.transportShiftPercent}% des dépenses de transport par rapport à ta moyenne`
+          : `Transit spending surge of ${memory.habits.transportShiftPercent}% above your baseline`,
+        memoryItem: {
+          title: isFr ? 'Poste Transports & Mobilités' : 'Transit & Mobility Spending',
+          amount: memory.habits.transportSpendThisMonth,
+          status: 'detected',
+          statusLabel: isFr ? 'Détecté' : 'Detected',
+          source: isFr ? 'Déduit de tes transactions récentes' : 'Inferred from recent movements',
+          usedFor: [
+            isFr ? 'Surveillance des habitudes' : 'Habit tracking',
+            isFr ? 'Simulations de dépenses' : 'Expense simulations',
+            isFr ? 'Aide régionale ciblée' : 'Targeted aid matching'
+          ],
+        },
+        reasoning: isFr
+          ? `Une accélération non anticipée des trajets réduit le coussin disponible avant ta prochaine rentrée.`
+          : `An unplanned acceleration in transit burns through liquid cash before next deposit.`,
+        impact: isFr
+          ? `Préserve 2 à 3 jours de runway supplémentaires sans découvert.`
+          : `Protects 2 to 3 days of extra runway.`,
+        recommendation: isFr
+          ? `Temporise les trajets discrétionnaires et explore l'abonnement étudiant subventionné.`
+          : `Pace discretionary rides and review student pass discounts.`,
+        uncertaintyLevel: 'detected',
+        uncertaintyLabel: isFr ? 'Comportement détecté automatiquement' : 'Pattern detected automatically',
+      },
     };
   }
 
@@ -463,11 +574,11 @@ export function getPersonalizedNextMove(
       badge: isFr ? 'Échéance prioritaire' : 'Priority Commitment',
       badgeColor: 'text-[#38BDF8] bg-[#38BDF8]/10 border-[#38BDF8]/30',
       title: isFr
-        ? `Ton loyer (${formatCurrency(rentAmount)}) arrive avant ta prochaine rentrée`
-        : `Your rent (${formatCurrency(rentAmount)}) is due before your next deposit arrives`,
+        ? `Ton loyer arrive bientôt. Garde cette marge disponible.`
+        : `Your rent is due soon. Keep this margin available.`,
       message: isFr
-        ? `Ton échéance fixe arrive avant le versement prévu dans ${daysUntilNextIncome} jours. Ton calcul intègre déjà cette priorité.`
-        : `Your fixed bill comes before your deposit in ${daysUntilNextIncome} days. Your runway calculation already reserves this amount.`,
+        ? `Voici ce que cela change pour ton loyer (${formatCurrency(rentAmount)}) : ton disponible du jour est calibré pour le sécuriser avant ta rentrée dans ${daysUntilNextIncome} jours.`
+        : `Here is what this means for your rent (${formatCurrency(rentAmount)}): your safe daily spend is calibrated to protect it before your deposit in ${daysUntilNextIncome} days.`,
       what: isFr
         ? `Garde ton disponible journalier sous ~${formatCurrency(targetDailyPace)}/jour jusqu'au prélèvement.`
         : `Keep daily spending under ~${formatCurrency(targetDailyPace)}/day until payment clears.`,
@@ -479,10 +590,38 @@ export function getPersonalizedNextMove(
         : `Rent is 100% protected and your account stays clear of overdraft tension.`,
       actionLabel: isFr ? 'Vérifier avec Ney' : 'Check with Ney',
       query: isFr
-        ? `Mon loyer de ${formatCurrency(rentAmount)} arrive avant ma rentrée dans ${daysUntilNextIncome} jours. Comment optimiser mes dépenses d'ici là ?`
-        : `My rent of ${formatCurrency(rentAmount)} is due before my deposit in ${daysUntilNextIncome} days. How should I pace my spending?`,
+        ? `Mon loyer de ${formatCurrency(rentAmount)} arrive avant ma rentrée dans ${daysUntilNextIncome} jours. Comment garder assez jusqu'à ma prochaine rentrée ?`
+        : `My rent of ${formatCurrency(rentAmount)} is due before my deposit in ${daysUntilNextIncome} days. How do I keep enough until my next deposit?`,
       iconName: 'Clock',
       financialOpportunity: memory.opportunity?.signalType === 'high_housing' ? memory.opportunity : undefined,
+      decisionTrace: {
+        signal: isFr
+          ? `Échéance "${nextCommitment.title}" (${formatCurrency(rentAmount)}) due avant ta rentrée dans ${daysUntilNextIncome} jours`
+          : `Bill "${nextCommitment.title}" (${formatCurrency(rentAmount)}) due before deposit in ${daysUntilNextIncome} days`,
+        memoryItem: {
+          title: nextCommitment.title,
+          amount: rentAmount,
+          status: 'confirmed',
+          statusLabel: isFr ? 'Confirmé' : 'Confirmed',
+          source: isFr ? 'Sanctuarisé dans tes charges fixes' : 'Ring-fenced in your fixed bills',
+          usedFor: [
+            isFr ? 'Calcul du Runway' : 'Runway calculation',
+            isFr ? 'Disponible journalier (Safe-to-Spend)' : 'Safe-to-Spend',
+            isFr ? 'Priorisation du Next Move' : 'Next Move recommendation'
+          ],
+        },
+        reasoning: isFr
+          ? `Cette charge est sanctuarisée pour que ton compte ne soit jamais à découvert lors du prélèvement.`
+          : `This bill is ring-fenced to prevent overdraft when the payment clears.`,
+        impact: isFr
+          ? `Loyer couvert dans le calcul et risque d'incident minimisé.`
+          : `Rent covered in runway and overdraft risk minimized.`,
+        recommendation: isFr
+          ? `Garde ton rythme journalier sous ~${formatCurrency(targetDailyPace)}/jour jusqu'à cette date. À toi de voir.`
+          : `Keep daily spend under ~${formatCurrency(targetDailyPace)}/day until this date. Up to you.`,
+        uncertaintyLevel: 'confirmed',
+        uncertaintyLabel: isFr ? 'Information confirmée' : 'Confirmed information',
+      },
     };
   }
 
@@ -493,11 +632,11 @@ export function getPersonalizedNextMove(
       badge: isFr ? 'Rentrée imminente' : 'Upcoming Deposit',
       badgeColor: 'text-[#D4FF3D] bg-[#D4FF3D]/10 border-[#D4FF3D]/30',
       title: isFr 
-        ? `Temporise tes achats non essentiels jusqu'à ta rentrée` 
-        : `Pace non-essential purchases until your deposit arrives`,
+        ? `En attendant ${daysUntilNextIncome} jours jusqu'à ta rentrée, tu préserves ton disponible.` 
+        : `Waiting ${daysUntilNextIncome} days until your deposit preserves your cushion.`,
       message: isFr
-        ? `Ton versement de +${formatCurrency(nextIncomeAmount)} arrive dans ${daysUntilNextIncome} jours. Attendre cette échéance te permet de préserver ton autonomie.`
-        : `Your deposit of +${formatCurrency(nextIncomeAmount)} arrives in ${daysUntilNextIncome} days. Waiting will preserve your runway cushion.`,
+        ? `Ton versement de +${formatCurrency(nextIncomeAmount)} arrive dans ${daysUntilNextIncome} jours. Attendre cette date préserve ton coussin intact.`
+        : `Your deposit of +${formatCurrency(nextIncomeAmount)} arrives in ${daysUntilNextIncome} days. Waiting for it keeps your cushion intact.`,
       what: isFr
         ? `Attends ${daysUntilNextIncome} jours avant de grosses dépenses non planifiées.`
         : `Wait ${daysUntilNextIncome} days before large unplanned spending.`,
@@ -505,13 +644,41 @@ export function getPersonalizedNextMove(
         ? `Ton versement de +${formatCurrency(nextIncomeAmount)} (${nextIncomeSource}) est prévu dans ${daysUntilNextIncome} ${daysUntilNextIncome <= 1 ? 'jour' : 'jours'}.`
         : `Your deposit of +${formatCurrency(nextIncomeAmount)} (${nextIncomeSource}) is scheduled in ${daysUntilNextIncome} ${daysUntilNextIncome <= 1 ? 'day' : 'days'}.`,
       impact: isFr
-        ? `Cette temporisation préserve actuellement ton runway de ${runwayDays} jours intact.`
-        : `This pacing keeps your current runway of ${runwayDays} days intact.`,
+        ? `Cette temporisation préserve actuellement ton runway de ${runwayDays} jours intact. À toi de voir.`
+        : `This pacing keeps your current runway of ${runwayDays} days intact. Up to you.`,
       actionLabel: isFr ? 'Simuler avec Ney' : 'Simulate with Ney',
       query: isFr 
-        ? `Ma rentrée de ${formatCurrency(nextIncomeAmount)} arrive dans ${daysUntilNextIncome} jours. Que me conseilles-tu pour mes dépenses d'ici là ?`
-        : `My deposit of ${formatCurrency(nextIncomeAmount)} arrives in ${daysUntilNextIncome} days. What is your advice for spending until then?`,
+        ? `Mon versement de ${formatCurrency(nextIncomeAmount)} arrive dans ${daysUntilNextIncome} jours. Est-ce que je peux me permettre des sorties d'ici là ?`
+        : `My deposit of ${formatCurrency(nextIncomeAmount)} arrives in ${daysUntilNextIncome} days. Can I afford going out until then?`,
       iconName: 'Clock',
+      decisionTrace: {
+        signal: isFr
+          ? `Rentrée ${nextIncomeSource} de +${formatCurrency(nextIncomeAmount)} prévue dans ${daysUntilNextIncome} jours`
+          : `Deposit ${nextIncomeSource} of +${formatCurrency(nextIncomeAmount)} scheduled in ${daysUntilNextIncome} days`,
+        memoryItem: {
+          title: nextIncomeSource,
+          amount: nextIncomeAmount,
+          status: 'confirmed',
+          statusLabel: isFr ? 'Planifié' : 'Scheduled',
+          source: isFr ? 'Échéance déclarée dans tes rentrées' : 'Scheduled income entry',
+          usedFor: [
+            isFr ? 'Extension de Runway' : 'Runway horizon extension',
+            isFr ? 'Déblocage de Safe-to-Spend' : 'Safe-to-Spend unlock',
+            isFr ? 'Simulation de grosses dépenses' : 'Large expense simulation'
+          ],
+        },
+        reasoning: isFr
+          ? `Une rentrée d'argent proche compense les dépenses courantes si le compte n'est pas asséché avant son arrivée.`
+          : `An imminent inflow offsets burn provided the balance is not depleted beforehand.`,
+        impact: isFr
+          ? `Repousse ton horizon de plus de 15 jours supplémentaires.`
+          : `Pushes your runway horizon by 15+ days.`,
+        recommendation: isFr
+          ? `Temporise les achats optionnels jusqu'au versement effectif. À toi de voir.`
+          : `Postpone optional purchases until payment clears. Up to you.`,
+        uncertaintyLevel: 'confirmed',
+        uncertaintyLabel: isFr ? 'Information confirmée' : 'Confirmed information',
+      },
     };
   }
 
@@ -523,26 +690,53 @@ export function getPersonalizedNextMove(
       badge: isFr ? 'Vigilance temporaire' : 'Temporary Pressure',
       badgeColor: 'text-[#FACC15] bg-[#FACC15]/10 border-[#FACC15]/30',
       title: isFr
-        ? `Modère tes dépenses à environ ${formatCurrency(targetDaily)}/jour cette semaine`
-        : `Keep spending around ${formatCurrency(targetDaily)}/day this week`,
+        ? `Tu es un peu juste cette semaine. En dépensant ~${formatCurrency(targetDaily)}/jour, tu maintiens ton équilibre.`
+        : `You're a bit tight this week. Spending ~${formatCurrency(targetDaily)}/day maintains your balance.`,
       message: isFr
-        ? `En adaptant temporairement tes sorties à ce rythme, tu déplaces ton point de tension sans déséquilibre.`
-        : `By pacing daily spending around this target, you push your pressure point without stress.`,
+        ? `Voici ce que cela change pour tes prochains jours : adapter temporairement tes sorties à ce rythme déplace ton point de tension sans déséquilibre. À toi de voir.`
+        : `Here is what this implies: pacing daily spend to this target pushes your pressure point without stress. Up to you.`,
       what: isFr
         ? `Plafonne tes dépenses variables à ~${formatCurrency(targetDaily)}/jour cette semaine.`
         : `Cap variable spending at ~${formatCurrency(targetDaily)}/day this week.`,
       why: isFr
-        ? `Ton runway actuel est de ${runwayDays} jours, sous le seuil d'alerte des 16 jours.`
-        : `Your current runway is ${runwayDays} days, below the 16-day alert threshold.`,
+        ? `Ton runway actuel est de ${runwayDays} jours, sous le seuil d'attention des 16 jours.`
+        : `Your current runway is ${runwayDays} days, below the 16-day attention threshold.`,
       impact: isFr
         ? `Ce rythme temporaire allonge ton autonomie de +4 jours sans stress.`
         : `This temporary pacing extends your runway by +4 days without stress.`,
       actionLabel: isFr ? 'Voir mes options avec Ney' : 'Explore options with Ney',
       query: isFr
-        ? `Mon runway est de ${runwayDays} jours. Quels ajustements simples me conseilles-tu cette semaine ?`
-        : `My runway is at ${runwayDays} days. What simple adjustments do you recommend this week?`,
+        ? `Tu me dis que je suis un peu juste cette semaine. Quels ajustements simples me conseilles-tu ?`
+        : `You mentioned I'm a bit tight this week. What simple adjustments do you suggest?`,
       iconName: 'AlertCircle',
       financialOpportunity: memory.opportunity,
+      decisionTrace: {
+        signal: isFr
+          ? `Horizon de ${runwayDays} jours sous le seuil d'attention (16 jours)`
+          : `Runway of ${runwayDays} days below attention threshold (16 days)`,
+        memoryItem: {
+          title: isFr ? 'Rythme de dépenses variables' : 'Variable spend pace',
+          amount: Math.round(safeToSpendToday),
+          status: 'estimated',
+          statusLabel: isFr ? 'Estimé' : 'Estimated',
+          source: isFr ? 'Calculé à partir de ton solde liquide et tes charges' : 'Derived from liquid cash and commitments',
+          usedFor: [
+            isFr ? 'Disponible journalier' : 'Safe-to-Spend',
+            isFr ? 'Projection de rupture de trésorerie' : 'Cash runway forecast'
+          ],
+        },
+        reasoning: isFr
+          ? `Un ajustement doux de quelques euros par jour repousse le point de tension de plusieurs semaines.`
+          : `A small reduction of a few euros per day pushes the pressure point further.`,
+        impact: isFr
+          ? `+4 jours d'autonomie préservés immédiatement sans privation brutale.`
+          : `+4 days of runway gained immediately without extreme sacrifice.`,
+        recommendation: isFr
+          ? `Plafonne tes dépenses variables à ~${formatCurrency(targetDaily)}/jour cette semaine. À toi de voir.`
+          : `Cap variable spending at ~${formatCurrency(targetDaily)}/day this week. Up to you.`,
+        uncertaintyLevel: 'estimated',
+        uncertaintyLabel: isFr ? 'Modélisation prévisionnelle' : 'Predictive model',
+      },
     };
   }
 
@@ -552,11 +746,11 @@ export function getPersonalizedNextMove(
     badge: isFr ? 'Engagements couverts' : 'Commitments Covered',
     badgeColor: 'text-[#38BDF8] bg-[#38BDF8]/10 border-[#38BDF8]/30',
     title: isFr
-      ? `Tes engagements principaux sont actuellement couverts`
-      : `Your main upcoming commitments are currently covered`,
+      ? `Tes charges sont calées. Tu as ${formatCurrency(safeToSpendToday)} disponible aujourd'hui.`
+      : `Your bills are set. You have ${formatCurrency(safeToSpendToday)} safe to spend today.`,
     message: isFr
-      ? `Loyer et forfaits prévus sont intégrés dans ton calcul. Tu disposes de ${formatCurrency(safeToSpendToday)} aujourd'hui en préservant tes échéances.`
-      : `Rent and subscriptions are accounted for. You have ${formatCurrency(safeToSpendToday)} to spend today while keeping commitments on track.`,
+      ? `Loyer et forfaits prévus sont isolés dans ton calcul. Tu peux dépenser ton disponible du jour sans inquiétude.`
+      : `Rent and subscriptions are accounted for. You can spend today's safe allowance with total peace of mind.`,
     what: isFr
       ? `Maintiens ton rythme habituel en respectant ton disponible du jour.`
       : `Maintain your steady pace within today's safe spend limit.`,
@@ -572,5 +766,32 @@ export function getPersonalizedNextMove(
       : `I have ${formatCurrency(safeToSpendToday)} available today and ${runwayDays} days of runway. What is your advice for this weekend?`,
     iconName: 'ShieldCheck',
     financialOpportunity: memory.opportunity,
+    decisionTrace: {
+      signal: isFr
+        ? `Charges vitales couvertes et solde liquide positif (${formatCurrency(computedRunway?.currentBalance || 1250)})`
+        : `Vital commitments covered and positive liquid balance (${formatCurrency(computedRunway?.currentBalance || 1250)})`,
+      memoryItem: {
+        title: isFr ? 'Total des charges sanctuarisées' : 'Total ring-fenced bills',
+        amount: memory.commitments.monthlyTotal,
+        status: 'confirmed',
+        statusLabel: isFr ? 'Confirmé' : 'Confirmed',
+        source: isFr ? 'Charges fixes déclarées et vérifiées' : 'Declared & verified fixed bills',
+        usedFor: [
+          isFr ? 'Calcul du Runway' : 'Runway calculation',
+          isFr ? 'Disponible sécurisé (Safe-to-Spend)' : 'Safe-to-Spend'
+        ],
+      },
+      reasoning: isFr
+        ? `Toutes les charges vitales du mois sont isolées. Tu peux dépenser ton disponible du jour sans aucun risque de découvert.`
+        : `All vital monthly expenses are quarantined. You can spend today's safe allowance safely.`,
+      impact: isFr
+        ? `Horizon de ${runwayDays} jours stable et sérénité confirmée.`
+        : `Stable ${runwayDays}-day runway with total peace of mind.`,
+      recommendation: isFr
+        ? `Maintiens ton rythme régulier sans changer tes habitudes.`
+        : `Keep your steady pace without changing habits.`,
+      uncertaintyLevel: 'confirmed',
+      uncertaintyLabel: isFr ? 'Information confirmée' : 'Confirmed information',
+    },
   };
 }

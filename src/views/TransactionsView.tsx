@@ -36,7 +36,11 @@ import {
   Check,
   Lock,
   SlidersHorizontal,
-  ArrowRight
+  ArrowRight,
+  Eye,
+  EyeOff,
+  CheckCircle2,
+  Zap
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -52,13 +56,17 @@ export const TransactionsView: React.FC<{ onNavigateToChat?: (initialQuery?: str
     recomputeRunway,
     memorySummary,
     confirmTransactionPattern,
-    dismissPatternSuggestion
+    dismissPatternSuggestion,
+    updateTransaction,
+    deleteTransaction,
+    toggleTransactionInRunway,
+    transactions: authTransactions,
   } = useAuth();
   const { showBudgetWarning, showToast } = useToast();
 
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>(authTransactions || []);
   const [categoryBudgets, setCategoryBudgets] = useState<CategoryBudget[]>([]);
-  const [activeFilter, setActiveFilter] = useState<'all' | 'recurring' | 'impulse' | 'essential' | 'income'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'recurring' | 'impulse' | 'essential' | 'inferred' | 'excluded'>('all');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showBudgetGoalModal, setShowBudgetGoalModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -296,6 +304,9 @@ export const TransactionsView: React.FC<{ onNavigateToChat?: (initialQuery?: str
       date: formDate,
       status: 'settled',
       isRecurring: formTag === 'recurring',
+      memoryStatus: 'confirmed',
+      memorySource: 'user_added',
+      isDisabledInRunway: false,
       createdAt: new Date().toISOString(),
     };
 
@@ -397,27 +408,66 @@ export const TransactionsView: React.FC<{ onNavigateToChat?: (initialQuery?: str
   };
 
   const handleDelete = async (id: string) => {
-    const updated = transactions.filter((t) => t.id !== id);
-    setTransactions(updated);
-    recomputeRunway(updated);
+    await deleteTransaction(id);
+    setTransactions((prev) => prev.filter((t) => t.id !== id));
+    showToast({
+      type: 'info',
+      title: language === 'fr' ? 'Mouvement supprimé' : 'Transaction Deleted',
+      message: language === 'fr' ? 'La transaction a été retirée de votre mémoire.' : 'Transaction removed from memory.',
+    });
+  };
 
-    if (currentUser && !currentUser.isAnonymous && !id.startsWith('sample-') && !id.startsWith('tx-opt-')) {
-      try {
-        await deleteDoc(doc(db, 'users', currentUser.uid, 'transactions', id));
-      } catch (err) {
-        console.error('Error deleting transaction:', err);
-      }
-    }
+  const handleToggleRunway = async (tx: Transaction) => {
+    const willDisable = !tx.isDisabledInRunway;
+    await toggleTransactionInRunway(tx.id);
+    setTransactions((prev) =>
+      prev.map((t) => (t.id === tx.id ? { ...t, isDisabledInRunway: willDisable } : t))
+    );
+    showToast({
+      type: willDisable ? 'info' : 'success',
+      title: willDisable
+        ? (language === 'fr' ? 'Dépense neutralisée' : 'Expense Neutralized')
+        : (language === 'fr' ? 'Dépense réintégrée' : 'Expense Restored'),
+      message: willDisable
+        ? (language === 'fr' 
+            ? `"${tx.title}" est exclue du calcul de runway. L'IA n'impactera pas votre horizon.` 
+            : `"${tx.title}" is excluded from runway calculations. AI will not penalize your horizon.`)
+        : (language === 'fr' 
+            ? `"${tx.title}" est à nouveau prise en compte dans le calcul du runway.` 
+            : `"${tx.title}" is included back in runway calculation.`),
+    });
+  };
+
+  const handleConfirmPattern = async (tx: Transaction) => {
+    await confirmTransactionPattern(tx.id, { memoryStatus: 'confirmed', isRecurring: true, type: 'fixed' });
+    setTransactions((prev) =>
+      prev.map((t) => (t.id === tx.id ? { ...t, memoryStatus: 'confirmed', isRecurring: true, type: 'fixed' } : t))
+    );
+    showToast({
+      type: 'success',
+      title: language === 'fr' ? 'Récurrence validée' : 'Recurrence Confirmed',
+      message: language === 'fr'
+        ? `"${tx.title}" est sanctuarisée comme charge fixe prévisible.`
+        : `"${tx.title}" confirmed as a predictable commitment.`,
+    });
   };
 
   // Filter transactions
   const filteredTransactions = transactions.filter((tx) => {
     if (activeFilter === 'all') return true;
-    if (activeFilter === 'recurring') return tx.isRecurring || tx.type === 'fixed';
-    if (activeFilter === 'impulse') return tx.category === 'leisure' || tx.category === 'shopping';
-    if (activeFilter === 'essential') return tx.category === 'housing' || tx.category === 'food' || tx.category === 'transport';
+    if (activeFilter === 'recurring') return !tx.isDisabledInRunway && (tx.isRecurring || tx.type === 'fixed');
+    if (activeFilter === 'impulse') return !tx.isDisabledInRunway && (tx.category === 'leisure' || tx.category === 'shopping');
+    if (activeFilter === 'essential') return !tx.isDisabledInRunway && (tx.category === 'housing' || tx.category === 'food' || tx.category === 'transport');
+    if (activeFilter === 'inferred') return !tx.isDisabledInRunway && (tx.memoryStatus === 'detected' || tx.memorySource === 'detected_pattern' || (tx.isRecurring && tx.memoryStatus !== 'confirmed'));
+    if (activeFilter === 'excluded') return Boolean(tx.isDisabledInRunway);
     return true;
   });
+
+  // Summary counts for Trust Layer
+  const excludedCount = transactions.filter((t) => t.isDisabledInRunway).length;
+  const inferredCount = transactions.filter((t) => !t.isDisabledInRunway && (t.memoryStatus === 'detected' || t.memorySource === 'detected_pattern' || (t.isRecurring && t.memoryStatus !== 'confirmed'))).length;
+  const recurringCount = transactions.filter((t) => !t.isDisabledInRunway && (t.isRecurring || t.type === 'fixed')).length;
+  const activeCount = transactions.length - excludedCount;
 
   const getTagVisual = (tx: Transaction) => {
     if (tx.isRecurring || tx.type === 'fixed') {
@@ -487,65 +537,125 @@ export const TransactionsView: React.FC<{ onNavigateToChat?: (initialQuery?: str
         </div>
       </header>
 
-      {/* Ney AI Learning Notice Banner & Money Memory Decision Context */}
-      <div className="p-5 rounded-3xl bg-[#161b27] border border-[#1e293b] space-y-3.5 shadow-xl">
-        <div className="flex items-start gap-3.5">
-          <div className="p-2.5 rounded-2xl bg-[#D4FF3D]/10 text-[#D4FF3D] border border-[#D4FF3D]/20 shrink-0">
-            <Brain className="w-5 h-5" />
+      {/* Ney AI Learning Notice Banner & Memory Trust Layer */}
+      <div 
+        id="memory-trust-layer-banner"
+        className="p-5 rounded-3xl bg-[#161b27] border border-[#1e293b] space-y-4 shadow-xl relative overflow-hidden"
+      >
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-start gap-3.5">
+            <div className="p-2.5 rounded-2xl bg-[#D4FF3D]/10 text-[#D4FF3D] border border-[#D4FF3D]/20 shrink-0 mt-0.5">
+              <Brain className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h4 className="text-xs sm:text-sm font-bold text-[#F5F5F0] tracking-wide uppercase font-mono">
+                  {language === 'fr' ? 'MEMORY TRUST LAYER' : 'MEMORY TRUST LAYER'}
+                </h4>
+                <span className="text-[10px] text-[#D4FF3D] font-mono font-bold bg-[#D4FF3D]/10 px-2.5 py-0.5 rounded-full border border-[#D4FF3D]/30">
+                  {language === 'fr' ? 'L\'IA CONSEILLE. VOUS DÉCIDEZ.' : 'AI ADVISES. YOU DECIDE.'}
+                </span>
+              </div>
+              <p className="text-xs text-[#8A8F98] leading-relaxed max-w-3xl">
+                {language === 'fr'
+                  ? 'Chaque inférence de Ney est transparente et traçable. Vos récurrences sont identifiées sans corvée de saisie ("Zero homework"), et vous gardez la souveraineté totale : validez une détection ou neutralisez n\'importe quelle dépense du calcul en un geste.'
+                  : 'Every inference by Ney is transparent and verifiable. Your recurring patterns are detected without tedious manual data entry ("Zero homework"), and you retain full sovereignty: confirm a pattern or neutralize any expense from calculations with a single tap.'}
+              </p>
+            </div>
           </div>
-          <div className="space-y-1">
-            <h4 className="text-xs sm:text-sm font-semibold text-[#F5F5F0] flex items-center gap-2">
-              <span>{t.views.transactions.memoryPurpose}</span>
-              <span className="text-[10px] text-[#D4FF3D] font-mono font-normal">
-                (CONTEXTE DÉCISIONNEL • PAS UN SIMPLE HISTORIQUE)
-              </span>
-            </h4>
-            <p className="text-xs text-[#8A8F98] leading-relaxed">
-              {t.views.transactions.learningNotice}
-            </p>
+        </div>
+
+        {/* Memory Trust Metrics Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-3 border-t border-[#1e293b]/70 text-xs font-mono">
+          <div className="p-3 rounded-2xl bg-[#0B0E17]/70 border border-[#1e293b]">
+            <span className="text-[10px] uppercase text-[#D4FF3D] block font-bold">
+              {language === 'fr' ? 'Mémoires actives' : 'Active memories'}
+            </span>
+            <span className="text-base sm:text-lg font-bold text-[#F5F5F0] mt-0.5 block">
+              {activeCount}
+            </span>
+            <span className="text-[10px] text-[#8A8F98] block">
+              {language === 'fr' ? 'Prises en compte dans le Runway' : 'Factored into runway'}
+            </span>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-[#0B0E17]/70 border border-[#1e293b]">
+            <span className="text-[10px] uppercase text-[#38BDF8] block font-bold">
+              {language === 'fr' ? 'Sanctuarisées' : 'Secured'}
+            </span>
+            <span className="text-base sm:text-lg font-bold text-[#38BDF8] mt-0.5 block">
+              {recurringCount}
+            </span>
+            <span className="text-[10px] text-[#8A8F98] block">
+              {language === 'fr' ? 'Charges fixes réservées' : 'Predictable commitments'}
+            </span>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-[#0B0E17]/70 border border-[#1e293b]">
+            <span className="text-[10px] uppercase text-[#FACC15] block font-bold">
+              {language === 'fr' ? 'Inférences IA' : 'AI Inferences'}
+            </span>
+            <span className="text-base sm:text-lg font-bold text-[#FACC15] mt-0.5 block">
+              {inferredCount}
+            </span>
+            <span className="text-[10px] text-[#8A8F98] block">
+              {language === 'fr' ? 'Détectées automatiquement' : 'Zero-homework detected'}
+            </span>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-[#0B0E17]/70 border border-[#1e293b]">
+            <span className="text-[10px] uppercase text-[#94A3B8] block font-bold">
+              {language === 'fr' ? 'Neutralisées' : 'Neutralized'}
+            </span>
+            <span className="text-base sm:text-lg font-bold text-[#94A3B8] mt-0.5 block">
+              {excludedCount}
+            </span>
+            <span className="text-[10px] text-[#8A8F98] block">
+              {language === 'fr' ? 'Exclues de l\'horizon par vous' : 'Excluded by user'}
+            </span>
           </div>
         </div>
 
         {/* Money Memory: Context for decision-making */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-[#1e293b]/70 text-xs font-mono">
-          <div className="p-2.5 rounded-xl bg-[#0B0E17]/60 border border-[#1e293b] text-[#8A8F98]">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 text-xs font-mono">
+          <div className="p-2.5 rounded-xl bg-[#0B0E17]/50 border border-[#1e293b] text-[#8A8F98]">
             <span className="text-[10px] uppercase text-[#38BDF8] block font-bold">
               {language === 'fr' ? 'Échéance sanctuarisée' : 'Secured Commitment'}
             </span>
             <span className="text-[#F5F5F0] text-[11px] mt-0.5 block">
               {housingCommitment 
                 ? (language === 'fr' 
-                    ? `Ton prochain loyer (${formatCurrency(housingCommitment.amount)}) est déjà pris en compte dans ton runway.`
-                    : `Next rent (${formatCurrency(housingCommitment.amount)}) is already accounted for in your runway.`)
+                    ? `Prochain loyer (${formatCurrency(housingCommitment.amount)}) déduit de l'horizon.`
+                    : `Next rent (${formatCurrency(housingCommitment.amount)}) deducted from horizon.`)
                 : (language === 'fr'
-                    ? `Charges fixes (${formatCurrency(computedRunway?.totalFixedExpenses ?? 420)}/mois) déduites de ton horizon.`
-                    : `Fixed commitments (${formatCurrency(computedRunway?.totalFixedExpenses ?? 420)}/mo) deducted.`)}
+                    ? `Charges fixes (${formatCurrency(computedRunway?.totalFixedExpenses ?? 420)}/mois) sanctuarisées.`
+                    : `Fixed commitments (${formatCurrency(computedRunway?.totalFixedExpenses ?? 420)}/mo) secured.`)}
             </span>
           </div>
 
-          <div className="p-2.5 rounded-xl bg-[#0B0E17]/60 border border-[#1e293b] text-[#8A8F98]">
+          <div className="p-2.5 rounded-xl bg-[#0B0E17]/50 border border-[#1e293b] text-[#8A8F98]">
             <span className="text-[10px] uppercase text-[#D4FF3D] block font-bold">
-              {language === 'fr' ? 'Poste sous surveillance' : 'Monitored Spending'}
+              {language === 'fr' ? 'Surveillance dépenses de vie' : 'Monitored Variable Burn'}
             </span>
             <span className="text-[#F5F5F0] text-[11px] mt-0.5 block">
               {transportSpent > 0 
                 ? (language === 'fr'
-                    ? `Transports à ${formatCurrency(transportSpent)} ce mois : suivi par Ney pour affiner les simulations.`
-                    : `Transit at ${formatCurrency(transportSpent)} this month: monitored by Ney for simulations.`)
+                    ? `Transports à ${formatCurrency(transportSpent)} ce mois : calibré dans vos Safe-to-Spend.`
+                    : `Transit at ${formatCurrency(transportSpent)} this month: calibrated in Safe-to-Spend.`)
                 : (language === 'fr'
-                    ? `Dépenses de vie de ${formatCurrency(currentMonthSpent)} ce mois-ci.`
+                    ? `Dépenses courantes à ${formatCurrency(currentMonthSpent)} ce mois-ci.`
                     : `Living expenses at ${formatCurrency(currentMonthSpent)} this month.`)}
             </span>
           </div>
 
-          <div className="p-2.5 rounded-xl bg-[#0B0E17]/60 border border-[#1e293b] text-[#8A8F98] flex flex-col justify-between">
+          <div className="p-2.5 rounded-xl bg-[#0B0E17]/50 border border-[#1e293b] text-[#8A8F98] flex flex-col justify-between">
             <span className="text-[10px] uppercase text-[#FACC15] block font-bold">
-              {language === 'fr' ? 'Règle décisionnelle' : 'Decision Rule'}
+              {language === 'fr' ? 'Contrôle souverain' : 'Sovereign Control'}
             </span>
             <span className="text-[#F5F5F0] text-[11px] mt-0.5 block">
               {language === 'fr'
-                ? 'L\'IA conseille à partir de ces repères. Vous décidez seul de vos achats.'
-                : 'AI advises using this context. You decide all purchases.'}
+                ? 'Vous pouvez neutraliser un achat exceptionnel pour qu\'il ne raccourcisse pas votre Runway.'
+                : 'Neutralize exceptional purchases so they do not artificially shorten your Runway.'}
             </span>
           </div>
         </div>
@@ -846,6 +956,32 @@ export const TransactionsView: React.FC<{ onNavigateToChat?: (initialQuery?: str
           <Flame className="w-3.5 h-3.5" />
           <span>{t.views.transactions.filterImpulse}</span>
         </button>
+
+        <button
+          id="filter-movements-inferred"
+          onClick={() => setActiveFilter('inferred')}
+          className={`px-4 py-2 min-h-[44px] rounded-full text-xs font-mono transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 justify-center ${
+            activeFilter === 'inferred'
+              ? 'bg-[#FACC15] text-[#0B0E17] font-bold shadow-[0_0_12px_rgba(250,204,21,0.25)]'
+              : 'bg-[#161b27] text-[#8A8F98] hover:text-[#F5F5F0] border border-[#1e293b]'
+          }`}
+        >
+          <Zap className="w-3.5 h-3.5 text-[#FACC15]" />
+          <span>{language === 'fr' ? 'Inférences IA' : 'AI Inferred'} ({inferredCount})</span>
+        </button>
+
+        <button
+          id="filter-movements-excluded"
+          onClick={() => setActiveFilter('excluded')}
+          className={`px-4 py-2 min-h-[44px] rounded-full text-xs font-mono transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 justify-center ${
+            activeFilter === 'excluded'
+              ? 'bg-[#38BDF8] text-[#0B0E17] font-bold shadow-[0_0_12px_rgba(56,189,248,0.25)]'
+              : 'bg-[#161b27] text-[#8A8F98] hover:text-[#F5F5F0] border border-[#1e293b]'
+          }`}
+        >
+          <EyeOff className="w-3.5 h-3.5" />
+          <span>{language === 'fr' ? 'Neutralisés' : 'Neutralized'} ({excludedCount})</span>
+        </button>
       </div>
 
       {/* Movements Stream List */}
@@ -868,6 +1004,10 @@ export const TransactionsView: React.FC<{ onNavigateToChat?: (initialQuery?: str
             filteredTransactions.map((tx) => {
               const tagInfo = getTagVisual(tx);
               const TagIcon = tagInfo.icon;
+              const isExcluded = Boolean(tx.isDisabledInRunway);
+              const isConfirmed = tx.memoryStatus === 'confirmed' || tx.memorySource === 'user_added';
+              const isInferred = !isConfirmed && (tx.memoryStatus === 'detected' || tx.memorySource === 'detected_pattern' || (tx.isRecurring && tx.memoryStatus !== 'confirmed'));
+
               return (
                 <motion.div
                   key={tx.id}
@@ -875,44 +1015,139 @@ export const TransactionsView: React.FC<{ onNavigateToChat?: (initialQuery?: str
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }}
-                  className="p-4 sm:p-5 rounded-2xl bg-[#161b27] hover:bg-[#1a2130] border border-[#1e293b] flex items-center justify-between gap-4 transition-all shadow-md group"
+                  className={`p-4 sm:p-5 rounded-2xl border transition-all shadow-md group ${
+                    isExcluded
+                      ? 'bg-[#10141e]/75 border-[#243044] opacity-75'
+                      : 'bg-[#161b27] hover:bg-[#1a2130] border-[#1e293b]'
+                  }`}
                 >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <div className={`w-10 h-10 rounded-2xl border flex items-center justify-center shrink-0 ${tagInfo.className}`}>
-                      <TagIcon className="w-4 h-4" />
-                    </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+                      <div className={`w-10 h-10 rounded-2xl border flex items-center justify-center shrink-0 ${
+                        isExcluded ? 'bg-[#1e293b]/40 border-[#1e293b] text-[#8A8F98]' : tagInfo.className
+                      }`}>
+                        <TagIcon className="w-4 h-4" />
+                      </div>
 
-                    <div className="min-w-0 space-y-0.5">
-                      <h4 className="text-xs sm:text-sm font-medium text-[#F5F5F0] truncate">
-                        {tx.title}
-                      </h4>
-                      <div className="flex items-center gap-2 text-[10px] font-mono text-[#8A8F98]">
-                        <span>{formatDate(new Date(tx.date))}</span>
-                        <span>•</span>
-                        <span className={`px-2 py-0.5 rounded-md border text-[9px] uppercase font-bold tracking-wider ${tagInfo.className}`}>
-                          {tagInfo.label}
-                        </span>
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className={`text-xs sm:text-sm font-medium truncate ${
+                            isExcluded ? 'text-[#8A8F98] line-through' : 'text-[#F5F5F0]'
+                          }`}>
+                            {tx.title}
+                          </h4>
+
+                          {/* Memory Trust Status Badges */}
+                          {isExcluded ? (
+                            <span className="px-2 py-0.5 rounded-md border text-[9px] uppercase font-mono font-bold tracking-wider bg-[#1e293b]/90 text-[#94A3B8] border-[#334155] flex items-center gap-1">
+                              <EyeOff className="w-2.5 h-2.5" />
+                              <span>{language === 'fr' ? 'Neutralisé du Runway' : 'Excluded from Runway'}</span>
+                            </span>
+                          ) : isConfirmed ? (
+                            <span className="px-2 py-0.5 rounded-md border text-[9px] uppercase font-mono font-bold tracking-wider bg-[#D4FF3D]/10 text-[#D4FF3D] border-[#D4FF3D]/30 flex items-center gap-1">
+                              <CheckCircle2 className="w-2.5 h-2.5" />
+                              <span>{language === 'fr' ? 'Confirmé' : 'Confirmed'}</span>
+                            </span>
+                          ) : isInferred ? (
+                            <span className="px-2 py-0.5 rounded-md border text-[9px] uppercase font-mono font-bold tracking-wider bg-[#FACC15]/10 text-[#FACC15] border-[#FACC15]/30 flex items-center gap-1">
+                              <Zap className="w-2.5 h-2.5" />
+                              <span>{language === 'fr' ? 'Détecté par l\'IA' : 'AI Inferred'}</span>
+                            </span>
+                          ) : null}
+
+                          <span className={`px-2 py-0.5 rounded-md border text-[9px] uppercase font-bold tracking-wider ${tagInfo.className}`}>
+                            {tagInfo.label}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-[10px] font-mono text-[#8A8F98] flex-wrap">
+                          <span>{formatDate(new Date(tx.date))}</span>
+                          <span>•</span>
+                          <span>
+                            {tx.isRecurring 
+                              ? (language === 'fr' ? 'Charge récurrente' : 'Recurring') 
+                              : (language === 'fr' ? 'Ponctuel' : 'One-off')}
+                          </span>
+                          {isExcluded && (
+                            <>
+                              <span>•</span>
+                              <span className="text-[#38BDF8]">
+                                {language === 'fr' ? 'Neutralisé : non déduit de l\'horizon' : 'Neutralized: not deducted from runway'}
+                              </span>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-3 shrink-0">
-                    <div className="text-right">
-                      <span className="text-sm sm:text-base font-bold text-[#F5F5F0] font-mono block">
-                        -{formatCurrency(tx.amount)}
-                      </span>
-                      <span className="text-[10px] text-[#8A8F98] font-mono">
-                        {tx.isRecurring ? (language === 'fr' ? 'Mensuel' : 'Monthly') : (language === 'fr' ? 'Ponctuel' : 'One-off')}
-                      </span>
+                    <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-[#1e293b]/50">
+                      <div className="text-left sm:text-right">
+                        <span className={`text-sm sm:text-base font-bold font-mono block ${
+                          isExcluded ? 'text-[#8A8F98] line-through' : 'text-[#F5F5F0]'
+                        }`}>
+                          -{formatCurrency(tx.amount)}
+                        </span>
+                        <span className="text-[10px] text-[#8A8F98] font-mono">
+                          {isExcluded 
+                            ? (language === 'fr' ? 'Hors calcul' : 'No burn impact')
+                            : tx.isRecurring 
+                            ? (language === 'fr' ? 'Mensuel' : 'Monthly') 
+                            : (language === 'fr' ? 'Ponctuel' : 'One-off')}
+                        </span>
+                      </div>
+
+                      {/* Memory Trust Controls */}
+                      <div className="flex items-center gap-1.5 font-mono text-xs">
+                        {/* Quick Validate for Inferred Patterns */}
+                        {isInferred && !isExcluded && (
+                          <button
+                            type="button"
+                            onClick={() => handleConfirmPattern(tx)}
+                            title={language === 'fr' ? 'Valider cette récurrence et la sanctuariser' : 'Confirm recurrence pattern'}
+                            className="px-2.5 py-1.5 rounded-xl bg-[#D4FF3D]/10 hover:bg-[#D4FF3D] text-[#D4FF3D] hover:text-[#0B0E17] border border-[#D4FF3D]/30 text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+                          >
+                            <Check className="w-3 h-3" />
+                            <span className="hidden sm:inline">{language === 'fr' ? 'Valider' : 'Confirm'}</span>
+                          </button>
+                        )}
+
+                        {/* Toggle Inclusion in Runway (User Decides Sovereign Control) */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleRunway(tx)}
+                          title={isExcluded 
+                            ? (language === 'fr' ? 'Réintégrer dans le Runway' : 'Restore in Runway calculation') 
+                            : (language === 'fr' ? 'Neutraliser : exclure du Runway et du Safe-to-Spend' : 'Exclude from Runway calculation')}
+                          className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+                            isExcluded
+                              ? 'bg-[#1e293b] hover:bg-[#334155] text-[#38BDF8] border-[#38BDF8]/40 shadow-sm'
+                              : 'bg-[#0B0E17] hover:bg-[#1e293b] text-[#8A8F98] hover:text-[#F5F5F0] border-[#1e293b]'
+                          }`}
+                        >
+                          {isExcluded ? (
+                            <>
+                              <Eye className="w-3.5 h-3.5 text-[#38BDF8]" />
+                              <span>{language === 'fr' ? 'Réintégrer' : 'Restore'}</span>
+                            </>
+                          ) : (
+                            <>
+                              <EyeOff className="w-3.5 h-3.5" />
+                              <span className="hidden md:inline">{language === 'fr' ? 'Neutraliser' : 'Neutralize'}</span>
+                            </>
+                          )}
+                        </button>
+
+                        {/* Delete from memory */}
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(tx.id)}
+                          title={language === 'fr' ? 'Supprimer de la mémoire' : 'Delete from memory'}
+                          className="min-w-[36px] min-h-[36px] p-2 rounded-xl text-[#8A8F98] hover:text-[#F43F5E] hover:bg-[#0B0E17] opacity-80 group-hover:opacity-100 transition-all cursor-pointer flex items-center justify-center"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-
-                    <button
-                      onClick={() => handleDelete(tx.id)}
-                      title={language === 'fr' ? 'Supprimer de la mémoire' : 'Delete from memory'}
-                      className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl text-[#8A8F98] hover:text-[#F43F5E] hover:bg-[#0B0E17] opacity-80 group-hover:opacity-100 transition-all cursor-pointer flex items-center justify-center"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
                   </div>
                 </motion.div>
               );

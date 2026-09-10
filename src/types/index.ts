@@ -73,6 +73,26 @@ export interface CategorySpendingSummary {
   isCustom?: boolean;
 }
 
+export type UncertaintyLevel = 'confirmed' | 'detected' | 'estimated' | 'to_verify';
+export type MemorySource = 'user_added' | 'detected_pattern' | 'recurring_forecast' | 'external_grant';
+
+export interface MemoryTrace {
+  signal: string;
+  memoryItem: {
+    title: string;
+    amount?: number;
+    status: UncertaintyLevel;
+    statusLabel: string;
+    source: string;
+    usedFor: string[];
+  };
+  reasoning: string;
+  impact: string;
+  recommendation: string;
+  uncertaintyLevel: UncertaintyLevel;
+  uncertaintyLabel: string;
+}
+
 export interface Transaction {
   id: string;
   userId: string;
@@ -84,6 +104,9 @@ export interface Transaction {
   date: string; // YYYY-MM-DD
   status: 'settled' | 'pending' | 'recurring_active';
   isRecurring?: boolean;
+  isDisabledInRunway?: boolean;
+  memoryStatus?: UncertaintyLevel;
+  memorySource?: MemorySource;
   createdAt: string;
 }
 
@@ -293,5 +316,28 @@ export interface LongitudinalMemorySummary {
   candidateSuggestions: CandidatePatternSuggestion[];
   opportunity?: FinancialOpportunityMatch;
   moatSignalsCount: number;
+  lifeEvents?: StudentLifeEvent[];
+}
+
+export type LifeEventType = 
+  | 'semester_start' // Rentrée universitaire
+  | 'trip' // Voyage / Week-end chez les parents
+  | 'relocation' // Déménagement / Logement
+  | 'holidays' // Vacances / Période de stage
+  | 'new_term' // Nouveau semestre / Nouveaux cours
+  | 'rent_due' // Loyer mensuel
+  | 'grant_payout' // Bourse & Aides publiques
+  | 'income_inflow'; // Rentrée d'argent / Job étudiant
+
+export interface StudentLifeEvent {
+  id: string;
+  type: LifeEventType;
+  title: string;
+  dateOrPeriod: string;
+  impactDescription: string;
+  financialImpactDays?: number;
+  estimatedAmount?: number;
+  status: 'upcoming' | 'ongoing' | 'completed';
+  suggestedPrompt: string;
 }
 

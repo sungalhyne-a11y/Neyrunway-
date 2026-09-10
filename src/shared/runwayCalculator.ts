@@ -3,6 +3,7 @@ export interface TransactionInput {
   type: string;
   isRecurring?: boolean;
   status?: string;
+  isDisabledInRunway?: boolean;
 }
 
 export interface IncomeEventInput {
@@ -42,14 +43,14 @@ export function calculateRunway(input: RunwayEngineInput): RunwayEngineOutput {
 
   // 1. Calculate Monthly Fixed/Recurring Commitments
   const fixedTransactions = (input.transactions || []).filter(
-    (t) => t.type === 'fixed' || t.isRecurring || t.status === 'recurring_active'
+    (t) => (t.type === 'fixed' || t.isRecurring || t.status === 'recurring_active') && !t.isDisabledInRunway
   );
   const totalFixedExpenses = fixedTransactions.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
   const dailyFixedBurn = totalFixedExpenses > 0 ? totalFixedExpenses / 30 : 0;
 
   // 2. Identify Variable Expense Deductions from liquid cash
   const variableExpenses = (input.transactions || []).filter(
-    (t) => (t.type === 'variable' || !t.type) && !t.isRecurring && t.status !== 'recurring_active'
+    (t) => (t.type === 'variable' || !t.type) && !t.isRecurring && t.status !== 'recurring_active' && !t.isDisabledInRunway
   );
   const totalVariableSpent = variableExpenses.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
 

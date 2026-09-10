@@ -41,7 +41,7 @@ function NeyrunwayApp() {
   const renderCurrentView = () => {
     switch (currentRoute) {
       case 'dashboard':
-        return <DashboardView onNavigateToChat={handleNavigateToChat} />;
+        return <DashboardView onNavigateToChat={handleNavigateToChat} onNavigateToRoute={(route) => setCurrentRoute(route)} />;
       case 'chat':
         return <ChatView initialQuery={chatInitialQuery} onNavigate={(route) => setCurrentRoute(route)} />;
       case 'transactions':

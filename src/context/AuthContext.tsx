@@ -8,7 +8,7 @@ import {
   signOut as fbSignOut,
   signInAnonymously
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, collection } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, collection } from 'firebase/firestore';
 import { auth, googleProvider, db } from '../lib/firebase';
 import { 
   UserProfile, 
@@ -98,6 +98,9 @@ interface AuthContextType {
   memorySummary: LongitudinalMemorySummary;
   confirmTransactionPattern: (transactionId: string, updates: Partial<Transaction>) => Promise<void>;
   dismissPatternSuggestion: (suggestionId: string) => void;
+  updateTransaction: (transactionId: string, updates: Partial<Transaction>) => Promise<void>;
+  deleteTransaction: (transactionId: string) => Promise<void>;
+  toggleTransactionInRunway: (transactionId: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -838,6 +841,58 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return newComputed;
   };
 
+  const updateTransaction = useCallback(async (transactionId: string, updates: Partial<Transaction>) => {
+    const next = latestTransactionsRef.current.map((tx) =>
+      tx.id === transactionId ? { ...tx, ...updates } : tx
+    );
+    latestTransactionsRef.current = next;
+    setTransactions(next);
+    try {
+      localStorage.setItem('neyrunway_transactions', JSON.stringify(next));
+    } catch {}
+
+    await recomputeRunway(next);
+
+    if (currentUser && !currentUser.isAnonymous && !transactionId.startsWith('sample-')) {
+      try {
+        const docRef = doc(db, 'users', currentUser.uid, 'transactions', transactionId);
+        await updateDoc(docRef, {
+          ...updates,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (e) {
+        console.warn('Error updating transaction in Firestore:', e);
+      }
+    }
+  }, [currentUser]);
+
+  const deleteTransaction = useCallback(async (transactionId: string) => {
+    const next = latestTransactionsRef.current.filter((tx) => tx.id !== transactionId);
+    latestTransactionsRef.current = next;
+    setTransactions(next);
+    try {
+      localStorage.setItem('neyrunway_transactions', JSON.stringify(next));
+    } catch {}
+
+    await recomputeRunway(next);
+
+    if (currentUser && !currentUser.isAnonymous && !transactionId.startsWith('sample-') && !transactionId.startsWith('tx-opt-')) {
+      try {
+        const docRef = doc(db, 'users', currentUser.uid, 'transactions', transactionId);
+        await deleteDoc(docRef);
+      } catch (e) {
+        console.warn('Error deleting transaction in Firestore:', e);
+      }
+    }
+  }, [currentUser]);
+
+  const toggleTransactionInRunway = useCallback(async (transactionId: string) => {
+    const target = latestTransactionsRef.current.find((tx) => tx.id === transactionId);
+    if (!target) return;
+    const isNowDisabled = !target.isDisabledInRunway;
+    await updateTransaction(transactionId, { isDisabledInRunway: isNowDisabled });
+  }, [updateTransaction]);
+
   const signInWithGoogle = async () => {
     setLoading(true);
     try {
@@ -1350,6 +1405,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         memorySummary,
         confirmTransactionPattern,
         dismissPatternSuggestion,
+        updateTransaction,
+        deleteTransaction,
+        toggleTransactionInRunway,
       }}
     >
       {children}

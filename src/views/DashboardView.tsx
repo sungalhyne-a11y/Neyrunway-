@@ -24,12 +24,17 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-export const DashboardView: React.FC<{ onNavigateToChat: (initialQuery?: string) => void }> = ({ onNavigateToChat }) => {
+export const DashboardView: React.FC<{ 
+  onNavigateToChat: (initialQuery?: string) => void;
+  onNavigateToRoute?: (route: any) => void;
+}> = ({ onNavigateToChat, onNavigateToRoute }) => {
   const { t, formatCurrency, formatDays, formatDate, language } = useTranslation();
   const { currentUser, userProfile, computedRunway, isOnline, lastSyncedAt, recomputeRunway } = useAuth();
   const { showToast } = useToast();
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [showAdvancedAnalytics, setShowAdvancedAnalytics] = useState(false);
+  const [recentChanges, setRecentChanges] = useState<{ type: string; label: string; icon: string }[] | null>(null);
+  const [showChangeBanner, setShowChangeBanner] = useState(true);
 
   const runwayDays = computedRunway?.runwayDays ?? 34;
   const safeToSpend = computedRunway?.safeToSpendToday ?? 24;
@@ -40,6 +45,69 @@ export const DashboardView: React.FC<{ onNavigateToChat: (initialQuery?: string)
   const nextIncomeAmount = computedRunway?.nextIncomeAmount ?? 0;
   const nextIncomeSource = computedRunway?.nextIncomeSource;
   const daysUntilNextIncome = computedRunway?.daysUntilNextIncome ?? 14;
+
+  // Track return experience & surface what changed since last visit
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem('neyrunway_last_visit_snapshot');
+      const now = Date.now();
+      if (raw) {
+        const prev = JSON.parse(raw);
+        if (now - prev.timestamp > 60 * 1000) {
+          const diffs: { type: string; label: string; icon: string }[] = [];
+
+          if (runwayDays !== prev.runwayDays) {
+            const diff = runwayDays - prev.runwayDays;
+            diffs.push({
+              type: 'runway',
+              label: language === 'fr'
+                ? `Ton runway a évolué de ${diff > 0 ? '+' : ''}${diff} ${Math.abs(diff) <= 1 ? 'jour' : 'jours'} (actuellement ${runwayDays} jours).`
+                : `Your runway adjusted by ${diff > 0 ? '+' : ''}${diff} days (currently ${runwayDays} days).`,
+              icon: '⚡',
+            });
+          }
+
+          if (daysUntilNextIncome && prev.daysUntilIncome && daysUntilNextIncome !== prev.daysUntilIncome) {
+            diffs.push({
+              type: 'income',
+              label: language === 'fr'
+                ? `Ton prochain revenu approche : plus que ${daysUntilNextIncome} jours.`
+                : `Upcoming income is approaching: ${daysUntilNextIncome} days left.`,
+              icon: '📅',
+            });
+          }
+
+          if (totalFixedExpenses > 0) {
+            diffs.push({
+              type: 'fixed',
+              label: language === 'fr'
+                ? `${formatCurrency(totalFixedExpenses)} de charges fixes restent sanctuarisés dans ton calcul.`
+                : `${formatCurrency(totalFixedExpenses)} in fixed charges remain ring-fenced in your projection.`,
+              icon: '🛡️',
+            });
+          }
+
+          if (diffs.length > 0) {
+            setRecentChanges(diffs);
+            analytics.track('second_session', {
+              changesCount: diffs.length,
+            });
+          }
+        }
+      }
+
+      localStorage.setItem(
+        'neyrunway_last_visit_snapshot',
+        JSON.stringify({
+          timestamp: now,
+          runwayDays,
+          safeToSpend,
+          balance: currentBalance,
+          daysUntilIncome: daysUntilNextIncome,
+        })
+      );
+    } catch {}
+  }, [runwayDays, safeToSpend, currentBalance, daysUntilNextIncome, totalFixedExpenses, language]);
 
   const handleRecalculate = async () => {
     setIsRecalculating(true);
@@ -121,7 +189,7 @@ export const DashboardView: React.FC<{ onNavigateToChat: (initialQuery?: string)
           </h2>
           <p className="text-xs sm:text-sm text-[#8A8F98] mt-1">
             {language === 'fr' 
-              ? 'Sache exactement ce que tu peux faire sereinement avec ton argent aujourd\'hui.' 
+              ? 'Sache exactement ce que tu peux faire avec ton argent aujourd\'hui.' 
               : 'Know what you can safely do with your money today.'}
           </p>
         </div>
@@ -148,6 +216,41 @@ export const DashboardView: React.FC<{ onNavigateToChat: (initialQuery?: string)
           </button>
         </div>
       </header>
+
+      {/* Return Experience: What changed since your last visit? */}
+      {showChangeBanner && recentChanges && recentChanges.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          className="p-4 rounded-2xl bg-[#0B0E17] border border-[#D4FF3D]/25 relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg"
+        >
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#D4FF3D] bg-[#D4FF3D]/10 border border-[#D4FF3D]/20 px-2 py-0.5 rounded-md">
+                {language === 'fr' ? 'DEPUIS TON DERNIER PASSAGE' : 'SINCE YOUR LAST VISIT'}
+              </span>
+              <span className="text-[11px] text-[#8A8F98]">
+                {language === 'fr' ? 'Faits financiers récents' : 'Recent factual updates'}
+              </span>
+            </div>
+            <div className="space-y-1">
+              {recentChanges.map((c, idx) => (
+                <p key={idx} className="text-xs text-[#F5F5F0] flex items-center gap-2">
+                  <span>{c.icon}</span>
+                  <span>{c.label}</span>
+                </p>
+              ))}
+            </div>
+          </div>
+          <button
+            onClick={() => setShowChangeBanner(false)}
+            className="self-end sm:self-center px-3 py-1.5 rounded-xl bg-[#161b27] hover:bg-[#1e293b] border border-[#1e293b] text-xs font-mono text-[#8A8F98] hover:text-[#F5F5F0] transition-colors cursor-pointer whitespace-nowrap"
+          >
+            {language === 'fr' ? 'Compris' : 'Dismiss'}
+          </button>
+        </motion.div>
+      )}
 
       {/* 01 — SAFE TO SPEND TODAY & 02 — RUNWAY & 03 — NEXT INCOME */}
       <div 
@@ -311,7 +414,10 @@ export const DashboardView: React.FC<{ onNavigateToChat: (initialQuery?: string)
       </div>
 
       {/* 04 — WHAT SHOULD I DO NEXT? (The Permanent Next Move Layer) */}
-      <NextMoveCard onAction={(query) => onNavigateToChat(query)} />
+      <NextMoveCard 
+        onAction={(query) => onNavigateToChat(query)} 
+        onNavigateToMemory={() => onNavigateToRoute?.('transactions')}
+      />
 
       {/* SIGNATURE INTERACTION: "CAN I AFFORD THIS?" */}
       <CanIAffordThisCard onConsultNey={handleSimulatorConsult} />
